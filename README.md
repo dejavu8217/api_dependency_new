@@ -195,7 +195,7 @@ const GROUP_MAPPINGS = {
 - Edge 90+
 
 ## 📄 라이선스
-MIT License
+Benett
 
 ## 🤝 기여하기
 이슈 및 PR을 환영합니다!
@@ -210,4 +210,4 @@ MIT License
 질문이나 제안사항이 있으시면 이슈를 생성해주세요.
 
 ---
-Made with ❤️ for API developers
+Made with ❤️ for QA
