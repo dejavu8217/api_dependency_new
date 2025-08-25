@@ -1,0 +1,3580 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API 의존성 시각화 & 리스크 분석기 v2.0</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jsyaml/4.1.0/js-yaml.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: linear-gradient(135deg, #0a0a0a 0%, #1a1a2e 100%);
+            color: #e0e0e0;
+            overflow: hidden;
+        }
+
+        /* Layout */
+        #app {
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+        }
+
+        #left-panel {
+            width: 320px;
+            background: rgba(20, 20, 20, 0.95);
+            backdrop-filter: blur(10px);
+            border-right: 1px solid rgba(102, 126, 234, 0.3);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+            transition: width 0.3s ease;
+        }
+
+        #left-panel.collapsed {
+            width: 60px;
+        }
+
+        #main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        #right-panel {
+            width: 360px;
+            background: rgba(20, 20, 20, 0.95);
+            backdrop-filter: blur(10px);
+            border-left: 1px solid rgba(102, 126, 234, 0.3);
+            padding: 20px;
+            overflow-y: auto;
+            transition: transform 0.3s ease;
+        }
+
+        #right-panel.hidden {
+            transform: translateX(100%);
+        }
+
+        /* Header */
+        #header {
+            background: linear-gradient(135deg, rgba(26, 26, 46, 0.9) 0%, rgba(22, 33, 62, 0.9) 100%);
+            backdrop-filter: blur(10px);
+            padding: 20px 30px;
+            border-bottom: 1px solid rgba(102, 126, 234, 0.3);
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            box-shadow: 0 4px 30px rgba(0,0,0,0.5);
+        }
+
+        #header h1 {
+            font-size: 24px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea 0%, #64ffda 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            flex: 1;
+        }
+
+        .header-controls {
+            display: flex;
+            gap: 12px;
+        }
+
+        .header-btn {
+            padding: 8px 16px;
+            background: rgba(102, 126, 234, 0.2);
+            border: 1px solid rgba(102, 126, 234, 0.5);
+            border-radius: 8px;
+            color: #64ffda;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .header-btn:hover {
+            background: rgba(102, 126, 234, 0.4);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        /* File Upload */
+        .upload-section {
+            padding: 20px;
+            border-bottom: 1px solid rgba(42, 42, 74, 0.5);
+        }
+
+        .upload-zone {
+            border: 2px dashed rgba(102, 126, 234, 0.5);
+            border-radius: 12px;
+            padding: 30px;
+            text-align: center;
+            transition: all 0.3s;
+            cursor: pointer;
+            background: rgba(102, 126, 234, 0.05);
+        }
+
+        .upload-zone:hover {
+            border-color: #64ffda;
+            background: rgba(100, 255, 218, 0.05);
+        }
+
+        .upload-zone.dragover {
+            border-color: #64ffda;
+            background: rgba(100, 255, 218, 0.1);
+            transform: scale(1.02);
+        }
+
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.7;
+        }
+
+        .upload-text {
+            font-size: 14px;
+            color: #8892b0;
+            margin-bottom: 12px;
+        }
+
+        .upload-btn {
+            display: inline-block;
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: all 0.3s;
+            margin: 4px;
+        }
+
+        .upload-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        /* View Switcher */
+        .view-switcher {
+            display: flex;
+            gap: 0;
+            padding: 16px 30px;
+            background: rgba(22, 33, 62, 0.5);
+            border-bottom: 1px solid rgba(42, 42, 74, 0.5);
+        }
+
+        .view-btn {
+            padding: 10px 20px;
+            background: transparent;
+            color: #8892b0;
+            border: 1px solid rgba(42, 42, 74, 0.5);
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .view-btn:first-child {
+            border-radius: 8px 0 0 8px;
+        }
+
+        .view-btn:last-child {
+            border-radius: 0 8px 8px 0;
+        }
+
+        .view-btn:not(:last-child) {
+            border-right: none;
+        }
+
+        .view-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            transition: left 0.3s;
+            z-index: -1;
+        }
+
+        .view-btn.active::before {
+            left: 0;
+        }
+
+        .view-btn.active {
+            color: white;
+            border-color: transparent;
+        }
+
+        .view-btn:hover:not(.active) {
+            color: #64ffda;
+            border-color: rgba(100, 255, 218, 0.5);
+        }
+
+        /* Search */
+        .search-section {
+            padding: 16px;
+            border-bottom: 1px solid rgba(42, 42, 74, 0.5);
+        }
+
+        .search-container {
+            position: relative;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 12px 40px 12px 16px;
+            background: rgba(26, 26, 26, 0.6);
+            border: 1px solid rgba(42, 42, 74, 0.5);
+            border-radius: 8px;
+            color: white;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+
+        .search-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+            background: rgba(26, 26, 26, 0.8);
+        }
+
+        .search-icon {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #8892b0;
+        }
+
+        /* Stats */
+        .stats-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            padding: 20px;
+            border-bottom: 1px solid rgba(42, 42, 74, 0.5);
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, rgba(26, 26, 26, 0.6) 0%, rgba(42, 42, 74, 0.3) 100%);
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            border-radius: 10px;
+            padding: 16px;
+            text-align: center;
+            transition: all 0.3s;
+            cursor: pointer;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.3);
+            border-color: #64ffda;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: bold;
+            background: linear-gradient(135deg, #64ffda 0%, #667eea 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .stat-label {
+            font-size: 0.75rem;
+            color: #8892b0;
+            text-transform: uppercase;
+            margin-top: 4px;
+            letter-spacing: 1px;
+        }
+
+        /* Groups List */
+        .groups-section {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            min-height: 300px;
+        }
+
+        .section-title {
+            font-size: 13px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #8892b0;
+            margin-bottom: 16px;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .section-title::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: linear-gradient(90deg, rgba(102, 126, 234, 0.5) 0%, transparent 100%);
+        }
+
+        .group-item {
+            padding: 14px;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, rgba(26, 26, 26, 0.6) 0%, rgba(42, 42, 74, 0.2) 100%);
+            border: 1px solid rgba(42, 42, 74, 0.5);
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .group-item:hover {
+            border-color: #667eea;
+            transform: translateX(5px);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+        }
+
+        .group-item.active {
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.3) 0%, rgba(118, 75, 162, 0.3) 100%);
+            border-color: #64ffda;
+            box-shadow: 0 4px 20px rgba(100, 255, 218, 0.3);
+        }
+
+        .group-name {
+            font-size: 14px;
+            color: #e0e0e0;
+            font-weight: 600;
+        }
+
+        .group-count {
+            font-size: 12px;
+            color: #8892b0;
+            background: rgba(102, 126, 234, 0.2);
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: 600;
+        }
+
+        .group-item.active .group-count {
+            background: rgba(100, 255, 218, 0.3);
+            color: #64ffda;
+        }
+
+        /* Canvas */
+        #canvas {
+            flex: 1;
+            background: radial-gradient(circle at center, rgba(26, 26, 46, 0.3) 0%, rgba(10, 10, 10, 0.8) 100%);
+            position: relative;
+            overflow: hidden;
+        }
+
+        #canvas::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image: 
+                radial-gradient(circle at 20% 50%, rgba(102, 126, 234, 0.1) 0%, transparent 50%),
+                radial-gradient(circle at 80% 50%, rgba(100, 255, 218, 0.1) 0%, transparent 50%);
+            pointer-events: none;
+        }
+
+        #graph-svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Controls */
+        .controls-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 100;
+        }
+
+        .control-btn {
+            width: 40px;
+            height: 40px;
+            background: rgba(26, 26, 46, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(102, 126, 234, 0.5);
+            border-radius: 8px;
+            color: #8892b0;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            transition: all 0.3s;
+        }
+
+        .control-btn:hover {
+            background: rgba(102, 126, 234, 0.3);
+            color: #64ffda;
+            border-color: #64ffda;
+            transform: scale(1.1);
+        }
+
+        /* Right Panel */
+        .metric-card {
+            background: linear-gradient(135deg, rgba(26, 26, 26, 0.8) 0%, rgba(42, 42, 74, 0.4) 100%);
+            border: 1px solid rgba(102, 126, 234, 0.3);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 20px;
+            transition: all 0.3s;
+        }
+
+        .metric-card:hover {
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.2);
+            border-color: rgba(100, 255, 218, 0.5);
+        }
+
+        .metric-title {
+            font-size: 13px;
+            font-weight: 700;
+            text-transform: uppercase;
+            color: #8892b0;
+            margin-bottom: 16px;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .metric-title::before {
+            content: '';
+            width: 4px;
+            height: 16px;
+            background: linear-gradient(180deg, #64ffda 0%, #667eea 100%);
+            border-radius: 2px;
+        }
+
+        .metric-value {
+            font-size: 32px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #64ffda 0%, #667eea 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 12px;
+        }
+
+        .metric-label {
+            font-size: 14px;
+            color: #8892b0;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .metric-detail {
+            font-size: 14px;
+            color: #e0e0e0;
+            line-height: 1.8;
+            margin-top: 12px;
+        }
+
+        .risk-gauge {
+            height: 10px;
+            background: rgba(42, 42, 74, 0.5);
+            border-radius: 5px;
+            margin: 16px 0;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .risk-gauge-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #FFC107, #f07178);
+            border-radius: 5px;
+            transition: width 0.5s ease;
+            box-shadow: 0 0 10px rgba(0,0,0,0.3);
+        }
+
+        .dependency-list {
+            max-height: 250px;
+            overflow-y: auto;
+            padding-right: 8px;
+        }
+
+        .dependency-item {
+            padding: 12px;
+            background: rgba(26, 26, 26, 0.6);
+            border-left: 3px solid #667eea;
+            border-radius: 0 8px 8px 0;
+            margin-bottom: 10px;
+            font-size: 13px;
+            color: #e0e0e0;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .dependency-item:hover {
+            background: rgba(102, 126, 234, 0.15);
+            transform: translateX(4px);
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.2);
+        }
+
+        .dependency-item.incoming {
+            border-left-color: #64ffda;
+        }
+
+        .dependency-item.outgoing {
+            border-left-color: #f07178;
+        }
+
+        .dependency-item.circular {
+            border-left-color: #c792ea;
+        }
+
+        .dependency-type {
+            font-size: 11px;
+            color: #8892b0;
+            text-transform: uppercase;
+            margin-top: 6px;
+            letter-spacing: 0.5px;
+        }
+
+        /* Matrix View */
+        #matrix-container {
+            display: none;
+            padding: 30px;
+            overflow: auto;
+            height: 100%;
+        }
+
+        .matrix-cell {
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .matrix-cell:hover {
+            filter: brightness(1.5);
+            stroke-width: 2;
+            stroke: #64ffda;
+        }
+
+        .matrix-label {
+            font-size: 12px;
+            fill: #e0e0e0;
+        }
+
+        /* Tooltip */
+        .tooltip {
+            position: absolute;
+            padding: 14px;
+            background: linear-gradient(135deg, rgba(26, 26, 46, 0.98) 0%, rgba(42, 42, 74, 0.98) 100%);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(102, 126, 234, 0.5);
+            border-radius: 10px;
+            color: white;
+            font-size: 13px;
+            pointer-events: none;
+            z-index: 1000;
+            opacity: 0;
+            transition: opacity 0.3s;
+            max-width: 350px;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+        }
+
+        .tooltip.show {
+            opacity: 1;
+        }
+
+        .tooltip h4 {
+            color: #64ffda;
+            margin-bottom: 10px;
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .tooltip-row {
+            display: flex;
+            justify-content: space-between;
+            margin: 6px 0;
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(102, 126, 234, 0.2);
+        }
+
+        .tooltip-row:last-child {
+            border-bottom: none;
+        }
+
+        .tooltip-label {
+            color: #8892b0;
+            font-weight: 500;
+        }
+
+        .tooltip-value {
+            color: #e0e0e0;
+            font-weight: 600;
+        }
+
+        /* Legend */
+        .legend {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: linear-gradient(135deg, rgba(26, 26, 46, 0.95) 0%, rgba(42, 42, 74, 0.95) 100%);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(102, 126, 234, 0.5);
+            border-radius: 12px;
+            font-size: 12px;
+            z-index: 100;
+            max-width: 250px;
+            transition: all 0.3s ease;
+        }
+
+        .legend-header {
+            padding: 12px;
+            cursor: pointer;
+            border-bottom: 1px solid rgba(102, 126, 234, 0.3);
+            font-weight: 600;
+            font-size: 13px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            user-select: none;
+        }
+
+        .legend-header:hover {
+            background: rgba(102, 126, 234, 0.1);
+        }
+
+        #legend-content {
+            padding: 12px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .legend-color {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            margin-right: 10px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+        }
+
+        /* Loading */
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(42, 42, 74, 0.5);
+            border-top-color: #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        .loading-text {
+            margin-top: 16px;
+            color: #8892b0;
+            font-size: 14px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Node styles */
+        .node {
+            cursor: pointer;
+        }
+
+        .node-label {
+            font-size: 12px;
+            pointer-events: none;
+            fill: #e0e0e0;
+            text-anchor: middle;
+        }
+
+        .link {
+            fill: none;
+            stroke-opacity: 0.6;
+            transition: all 0.3s;
+        }
+
+        .link.highlighted {
+            stroke-opacity: 1;
+            stroke-width: 3;
+            stroke: #64ffda !important;
+            filter: drop-shadow(0 0 6px rgba(100, 255, 218, 0.6));
+        }
+
+        .node.highlighted circle {
+            stroke: #64ffda;
+            stroke-width: 3;
+            filter: brightness(1.3) drop-shadow(0 0 10px rgba(100, 255, 218, 0.5));
+        }
+
+        .node.dimmed {
+            opacity: 0.2;
+        }
+
+        .link.dimmed {
+            opacity: 0.1;
+        }
+
+        /* Export Menu */
+        .export-menu {
+            position: absolute;
+            top: 60px;
+            right: 20px;
+            background: linear-gradient(135deg, rgba(26, 26, 46, 0.98) 0%, rgba(42, 42, 74, 0.98) 100%);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(102, 126, 234, 0.5);
+            border-radius: 12px;
+            padding: 8px;
+            display: none;
+            z-index: 101;
+            box-shadow: 0 8px 30px rgba(0,0,0,0.6);
+        }
+
+        .export-menu.show {
+            display: block;
+        }
+
+        .export-option {
+            padding: 10px 16px;
+            color: #e0e0e0;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.2s;
+            font-size: 14px;
+        }
+
+        .export-option:hover {
+            background: rgba(102, 126, 234, 0.3);
+            color: #64ffda;
+        }
+
+        /* Filter Panel */
+        .filter-panel {
+            padding: 16px;
+            border-bottom: 1px solid rgba(42, 42, 74, 0.5);
+        }
+
+        .filter-option {
+            margin-bottom: 12px;
+        }
+
+        .filter-label {
+            font-size: 12px;
+            color: #8892b0;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .filter-select {
+            width: 100%;
+            padding: 8px;
+            background: rgba(26, 26, 26, 0.6);
+            border: 1px solid rgba(42, 42, 74, 0.5);
+            border-radius: 6px;
+            color: white;
+            font-size: 14px;
+        }
+
+        /* Animations */
+        @keyframes pulse {
+            0% { stroke-width: 2; stroke-opacity: 1; }
+            50% { stroke-width: 4; stroke-opacity: 0.6; }
+            100% { stroke-width: 2; stroke-opacity: 1; }
+        }
+
+        @keyframes glow {
+            0% { box-shadow: 0 0 5px rgba(100, 255, 218, 0.5); }
+            50% { box-shadow: 0 0 20px rgba(100, 255, 218, 0.8), 0 0 30px rgba(102, 126, 234, 0.6); }
+            100% { box-shadow: 0 0 5px rgba(100, 255, 218, 0.5); }
+        }
+
+        /* Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: rgba(15, 15, 35, 0.5);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: linear-gradient(180deg, #764ba2 0%, #667eea 100%);
+        }
+
+        /* Responsive */
+        @media (max-width: 1200px) {
+            #left-panel {
+                width: 280px;
+            }
+            #right-panel {
+                width: 320px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            #app {
+                flex-direction: column;
+            }
+            #left-panel {
+                width: 100%;
+                height: auto;
+                max-height: 40vh;
+            }
+            #right-panel {
+                position: absolute;
+                bottom: 0;
+                left: 0;
+                right: 0;
+                width: 100%;
+                transform: translateY(100%);
+            }
+            #right-panel.show {
+                transform: translateY(0);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div id="left-panel">
+            <div class="upload-section">
+                <div class="upload-zone" id="upload-zone">
+                    <div class="upload-icon">📁</div>
+                    <div class="upload-text">파일을 드래그하거나 클릭하여 업로드</div>
+                    <div>
+                        <label for="openapi-upload">
+                            <span class="upload-btn">OpenAPI 선택</span>
+                        </label>
+                        <input type="file" id="openapi-upload" accept=".json,.yaml,.yml">
+                        
+                        <label for="metrics-upload">
+                            <span class="upload-btn">메트릭 선택</span>
+                        </label>
+                        <input type="file" id="metrics-upload" accept=".json,.csv">
+                    </div>
+                </div>
+            </div>
+
+            <div class="search-section">
+                <div class="search-container">
+                    <input type="text" class="search-input" placeholder="API 검색..." id="search-input">
+                    <span class="search-icon">🔍</span>
+                </div>
+            </div>
+
+            <div class="filter-panel">
+                <div class="filter-option">
+                    <div class="filter-label">메소드 필터</div>
+                    <select class="filter-select" id="method-filter">
+                        <option value="">전체</option>
+                        <option value="GET">GET</option>
+                        <option value="POST">POST</option>
+                        <option value="PUT">PUT</option>
+                        <option value="PATCH">PATCH</option>
+                        <option value="DELETE">DELETE</option>
+                    </select>
+                </div>
+                <div class="filter-option">
+                    <div class="filter-label">위험도 필터</div>
+                    <select class="filter-select" id="risk-filter">
+                        <option value="">전체</option>
+                        <option value="high">높음 (7+)</option>
+                        <option value="medium">중간 (3-7)</option>
+                        <option value="low">낮음 (0-3)</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="stats-container">
+                <div class="stat-card" onclick="showStatDetails('groups')">
+                    <div class="stat-value" id="stat-groups">0</div>
+                    <div class="stat-label">그룹</div>
+                </div>
+                <div class="stat-card" onclick="showStatDetails('apis')">
+                    <div class="stat-value" id="stat-apis">0</div>
+                    <div class="stat-label">API</div>
+                </div>
+                <div class="stat-card" onclick="showStatDetails('deps')">
+                    <div class="stat-value" id="stat-deps">0</div>
+                    <div class="stat-label">의존성</div>
+                </div>
+                <div class="stat-card" onclick="showStatDetails('cycles')">
+                    <div class="stat-value" id="stat-cycles">0</div>
+                    <div class="stat-label">순환</div>
+                </div>
+            </div>
+
+            <div class="groups-section">
+                <div class="section-title">📊 API 그룹</div>
+                <div id="groups-list"></div>
+            </div>
+        </div>
+
+        <div id="main-content">
+            <div id="header">
+                <h1>🔍 API Dependency Analyzer v2.0</h1>
+                <div class="header-controls">
+                    <button class="header-btn" onclick="loadSampleData()">샘플 로드</button>
+                    <button class="header-btn" onclick="clearData()">초기화</button>
+                    <button class="header-btn" onclick="toggleExportMenu()">내보내기</button>
+                    <button class="header-btn" onclick="toggleFullscreen()">전체화면</button>
+                </div>
+            </div>
+
+            <div class="view-switcher">
+                <button class="view-btn active" data-view="group">그룹뷰</button>
+                <button class="view-btn" data-view="detail">상세뷰</button>
+                <button class="view-btn" data-view="matrix">매트릭스</button>
+                <button class="view-btn" data-view="timeline">타임라인</button>
+                <button class="view-btn" data-view="3d">3D뷰</button>
+            </div>
+
+            <div id="canvas">
+                <svg id="graph-svg"></svg>
+                <div id="matrix-container"></div>
+                <div id="timeline-container"></div>
+                <div id="3d-container"></div>
+                
+                <div class="controls-panel">
+                    <button class="control-btn" onclick="zoomIn()" title="확대">+</button>
+                    <button class="control-btn" onclick="zoomOut()" title="축소">−</button>
+                    <button class="control-btn" onclick="resetZoom()" title="초기화">⟲</button>
+                    <button class="control-btn" onclick="fitToScreen()" title="맞춤">⊡</button>
+                    <button class="control-btn" onclick="toggleAnimation()" title="애니메이션">▶</button>
+                    <button class="control-btn" onclick="captureImage()" title="캡처">📷</button>
+                </div>
+                
+                <div class="legend" id="legend">
+                    <div class="legend-header" onclick="toggleLegend()">
+                        <span>📊 API 그룹</span>
+                        <span id="legend-toggle" style="float: right; cursor: pointer;">▼</span>
+                    </div>
+                    <div id="legend-content" style="display: block;"></div>
+                </div>
+                
+                <div class="export-menu" id="export-menu">
+                    <div class="export-option" onclick="exportJSON()">JSON 내보내기</div>
+                    <div class="export-option" onclick="exportCSV()">CSV 내보내기</div>
+                    <div class="export-option" onclick="exportSVG()">SVG 이미지</div>
+                    <div class="export-option" onclick="exportPNG()">PNG 이미지</div>
+                    <div class="export-option" onclick="exportReport()">분석 리포트</div>
+                </div>
+            </div>
+        </div>
+
+        <div id="right-panel">
+            <div id="node-info" style="display: none;">
+                <div class="metric-card">
+                    <div class="metric-title">선택된 항목</div>
+                    <h3 id="selected-name" style="color: #64ffda; margin-bottom: 12px; font-size: 20px;">-</h3>
+                    <div id="selected-details" class="metric-detail"></div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-title">위험도 평가</div>
+                    <div class="metric-value" id="risk-score">-</div>
+                    <div class="risk-gauge">
+                        <div class="risk-gauge-fill" id="risk-gauge"></div>
+                    </div>
+                    <div class="metric-detail" id="risk-detail"></div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-title">의존성 분석</div>
+                    <div class="metric-label">들어오는 의존성 (IN)</div>
+                    <div class="dependency-list" id="in-dependencies"></div>
+                    <div class="metric-label" style="margin-top: 16px;">나가는 의존성 (OUT)</div>
+                    <div class="dependency-list" id="out-dependencies"></div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-title">영향도 & 권장사항</div>
+                    <div class="metric-detail" id="impact-detail"></div>
+                    <div class="metric-detail" id="recommendations" style="margin-top: 12px; color: #64ffda;"></div>
+                </div>
+            </div>
+
+            <div id="default-info">
+                <div class="metric-card">
+                    <div class="metric-title">시작하기</div>
+                    <div class="metric-detail">
+                        <strong>사용 방법:</strong><br><br>
+                        1. OpenAPI 스펙 파일 업로드 (JSON/YAML)<br>
+                        2. 선택적으로 메트릭 데이터 추가<br>
+                        3. 노드를 클릭하여 상세 정보 확인<br>
+                        4. 다양한 뷰 모드로 전환<br><br>
+                        
+                        <strong>단축키:</strong><br>
+                        • ESC: 선택 해제<br>
+                        • Space: 애니메이션 토글<br>
+                        • F: 전체화면<br>
+                        • S: 검색 포커스<br>
+                        • 1-5: 뷰 전환<br><br>
+                        
+                        <strong>지원 형식:</strong><br>
+                        • OpenAPI 2.0/3.0<br>
+                        • Swagger 스펙<br>
+                        • JSON/YAML/CSV
+                    </div>
+                </div>
+
+                <div class="metric-card">
+                    <div class="metric-title">최근 업데이트</div>
+                    <div class="metric-detail">
+                        • 3D 시각화 추가<br>
+                        • 타임라인 뷰 개선<br>
+                        • 실시간 필터링<br>
+                        • 다양한 내보내기 옵션<br>
+                        • 성능 최적화
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="tooltip" id="tooltip"></div>
+
+    <script>
+        // Enhanced Global State
+        let state = {
+            nodes: [],
+            links: [],
+            groups: new Map(),
+            metrics: new Map(),
+            currentView: 'group',
+            simulation: null,
+            svg: null,
+            g: null,
+            focusedNode: null,
+            focusedGroup: null,
+            cycles: [],
+            zoom: null,
+            animationEnabled: false,
+            filters: {
+                method: '',
+                risk: '',
+                search: ''
+            },
+            history: [],
+            settings: {
+                theme: 'dark',
+                language: 'ko',
+                autoSave: true
+            }
+        };
+
+        // Enhanced Group Colors with solid colors for nodes
+        const groupColors = {
+            'auth': '#c792ea',
+            'authentication': '#c792ea',
+            '인증·보안': '#c792ea',
+            'user': '#64ffda',
+            'users': '#64ffda',
+            '사용자·멤버': '#64ffda',
+            'product': '#ffcb6b',
+            'products': '#ffcb6b',
+            '상품·제품': '#ffcb6b',
+            'order': '#f07178',
+            'orders': '#f07178',
+            '주문·장바구니': '#f07178',
+            'payment': '#82aaff',
+            'payments': '#82aaff',
+            '구독·결제': '#82aaff',
+            'admin': '#ff5370',
+            '설정·관리자': '#ff5370',
+            'report': '#c3e88d',
+            'reports': '#c3e88d',
+            '리포트·대시보드': '#c3e88d',
+            'email': '#ffc777',
+            '이메일·캠페인': '#ffc777',
+            'integration': '#89ddff',
+            '통합·연동': '#89ddff',
+            'team': '#b2ccd6',
+            '팀·조직': '#b2ccd6',
+            'general': '#8892b0'
+        };
+
+        // Group mappings for proper categorization
+        const groupMappings = {
+            'auth': '인증·보안',
+            'authentication': '인증·보안',
+            'login': '인증·보안',
+            'logout': '인증·보안',
+            'token': '인증·보안',
+            'user': '사용자·멤버',
+            'users': '사용자·멤버',
+            'member': '사용자·멤버',
+            'profile': '사용자·멤버',
+            'account': '사용자·멤버',
+            'product': '상품·제품',
+            'products': '상품·제품',
+            'item': '상품·제품',
+            'catalog': '상품·제품',
+            'goods': '상품·제품',
+            'order': '주문·장바구니',
+            'orders': '주문·장바구니',
+            'cart': '주문·장바구니',
+            'checkout': '주문·장바구니',
+            'purchase': '주문·장바구니',
+            'payment': '구독·결제',
+            'payments': '구독·결제',
+            'billing': '구독·결제',
+            'subscription': '구독·결제',
+            'refund': '구독·결제',
+            'admin': '설정·관리자',
+            'settings': '설정·관리자',
+            'config': '설정·관리자',
+            'management': '설정·관리자',
+            'report': '리포트·대시보드',
+            'reports': '리포트·대시보드',
+            'dashboard': '리포트·대시보드',
+            'analytics': '리포트·대시보드',
+            'statistics': '리포트·대시보드',
+            'email': '이메일·캠페인',
+            'campaign': '이메일·캠페인',
+            'notification': '이메일·캠페인',
+            'message': '이메일·캠페인',
+            'integration': '통합·연동',
+            'webhook': '통합·연동',
+            'api': '통합·연동',
+            'external': '통합·연동',
+            'team': '팀·조직',
+            'organization': '팀·조직',
+            'workspace': '팀·조직',
+            'group': '팀·조직'
+        };
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            init();
+            setupKeyboardShortcuts();
+            loadFromLocalStorage();
+        });
+
+        function init() {
+            setupEventListeners();
+            initializeGraph();
+            setupDragAndDrop();
+        }
+
+        function setupEventListeners() {
+            // File uploads
+            document.getElementById('openapi-upload').addEventListener('change', handleOpenAPIUpload);
+            document.getElementById('metrics-upload').addEventListener('change', handleMetricsUpload);
+
+            // View switcher
+            document.querySelectorAll('.view-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => {
+                    const view = e.target.dataset.view;
+                    switchView(view);
+                });
+            });
+
+            // Search and filters
+            document.getElementById('search-input').addEventListener('input', handleSearch);
+            document.getElementById('method-filter').addEventListener('change', applyFilters);
+            document.getElementById('risk-filter').addEventListener('change', applyFilters);
+
+            // ESC key
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') clearFocus();
+            });
+        }
+
+        function setupDragAndDrop() {
+            const zone = document.getElementById('upload-zone');
+            
+            zone.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                zone.classList.add('dragover');
+            });
+
+            zone.addEventListener('dragleave', () => {
+                zone.classList.remove('dragover');
+            });
+
+            zone.addEventListener('drop', (e) => {
+                e.preventDefault();
+                zone.classList.remove('dragover');
+                
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    handleFileUpload(files[0]);
+                }
+            });
+
+            zone.addEventListener('click', () => {
+                document.getElementById('openapi-upload').click();
+            });
+        }
+
+        function setupKeyboardShortcuts() {
+            document.addEventListener('keydown', (e) => {
+                // View shortcuts (1-5)
+                if (e.key >= '1' && e.key <= '5') {
+                    const views = ['group', 'detail', 'matrix', 'timeline', '3d'];
+                    const index = parseInt(e.key) - 1;
+                    if (views[index]) switchView(views[index]);
+                }
+                
+                // Search focus (S)
+                if (e.key === 's' || e.key === 'S') {
+                    e.preventDefault();
+                    document.getElementById('search-input').focus();
+                }
+                
+                // Fullscreen (F)
+                if (e.key === 'f' || e.key === 'F') {
+                    toggleFullscreen();
+                }
+                
+                // Animation toggle (Space)
+                if (e.key === ' ') {
+                    e.preventDefault();
+                    toggleAnimation();
+                }
+            });
+        }
+
+        function initializeGraph() {
+            const canvas = document.getElementById('canvas');
+            const width = canvas.clientWidth;
+            const height = canvas.clientHeight;
+
+            state.svg = d3.select('#graph-svg')
+                .attr('width', width)
+                .attr('height', height);
+
+            // Enhanced defs for gradients and filters
+            const defs = state.svg.append('defs');
+            
+            // Create filters for glow effect
+            const filter = defs.append('filter')
+                .attr('id', 'glow');
+            
+            filter.append('feGaussianBlur')
+                .attr('stdDeviation', '3')
+                .attr('result', 'coloredBlur');
+            
+            const feMerge = filter.append('feMerge');
+            feMerge.append('feMergeNode')
+                .attr('in', 'coloredBlur');
+            feMerge.append('feMergeNode')
+                .attr('in', 'SourceGraphic');
+
+            // Create arrow markers with smaller size
+            const arrowTypes = [
+                { id: 'arrow-normal', color: '#8892b0' },
+                { id: 'arrow-highlighted', color: '#64ffda' },
+                { id: 'arrow-incoming', color: '#FF6B35' },  // Bright orange for incoming
+                { id: 'arrow-outgoing', color: '#4A90E2' },  // Bright blue for outgoing
+                { id: 'arrow-crud', color: '#64ffda' },
+                { id: 'arrow-auth-required', color: '#c792ea' },
+                { id: 'arrow-workflow', color: '#f07178' },
+                { id: 'arrow-reference', color: '#f78c6c' }
+            ];
+            
+            arrowTypes.forEach(arrow => {
+                defs.append('marker')
+                    .attr('id', arrow.id)
+                    .attr('viewBox', '0 -5 10 10')
+                    .attr('refX', 20)  // Reduced from 25
+                    .attr('refY', 0)
+                    .attr('markerWidth', 4)  // Reduced from 6
+                    .attr('markerHeight', 4)  // Reduced from 6
+                    .attr('orient', 'auto')
+                    .attr('markerUnits', 'strokeWidth')
+                    .append('path')
+                    .attr('d', 'M0,-3L8,0L0,3')  // Smaller arrow path
+                    .attr('fill', arrow.color)
+                    .style('opacity', 0.9);
+            });
+
+            state.g = state.svg.append('g');
+
+            // Enhanced zoom with smooth transitions
+            state.zoom = d3.zoom()
+                .scaleExtent([0.1, 5])
+                .on('zoom', (event) => {
+                    state.g.attr('transform', event.transform);
+                });
+
+            state.svg.call(state.zoom);
+
+            // Click on background
+            state.svg.on('click', function(event) {
+                if (event.target === this || event.target === state.svg.node()) {
+                    clearFocus();
+                }
+            });
+        }
+
+        async function handleFileUpload(file) {
+            const extension = file.name.split('.').pop().toLowerCase();
+            
+            if (['json', 'yaml', 'yml'].includes(extension)) {
+                handleOpenAPIFile(file);
+            } else if (extension === 'csv') {
+                handleCSVFile(file);
+            }
+        }
+
+        async function handleOpenAPIUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            handleOpenAPIFile(file);
+        }
+
+        async function handleOpenAPIFile(file) {
+            showLoading('OpenAPI 파일 로딩 중...');
+            
+            try {
+                const text = await file.text();
+                let data;
+                
+                if (file.name.endsWith('.yaml') || file.name.endsWith('.yml')) {
+                    data = jsyaml.load(text);
+                } else {
+                    data = JSON.parse(text);
+                }
+                
+                parseOpenAPI(data);
+                showNotification('✅ OpenAPI 로드 완료', 'success');
+                renderGraph();
+                saveToLocalStorage();
+            } catch (error) {
+                showNotification('❌ 파일 처리 실패: ' + error.message, 'error');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function handleMetricsUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            if (file.name.endsWith('.csv')) {
+                handleCSVFile(file);
+            } else {
+                handleMetricsFile(file);
+            }
+        }
+
+        async function handleCSVFile(file) {
+            showLoading('CSV 파일 처리 중...');
+            
+            try {
+                const text = await file.text();
+                const lines = text.split('\n');
+                const headers = lines[0].split(',');
+                const metrics = [];
+                
+                for (let i = 1; i < lines.length; i++) {
+                    if (lines[i].trim()) {
+                        const values = lines[i].split(',');
+                        const metric = {};
+                        headers.forEach((header, index) => {
+                            metric[header.trim()] = values[index]?.trim();
+                        });
+                        metrics.push(metric);
+                    }
+                }
+                
+                parseMetrics(metrics);
+                showNotification('✅ CSV 메트릭 로드 완료', 'success');
+                if (state.nodes.length > 0) renderGraph();
+            } catch (error) {
+                showNotification('❌ CSV 처리 실패: ' + error.message, 'error');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        async function handleMetricsFile(file) {
+            showLoading('메트릭 파일 로딩 중...');
+            
+            try {
+                const text = await file.text();
+                const data = JSON.parse(text);
+                parseMetrics(data);
+                showNotification('✅ 메트릭 로드 완료', 'success');
+                if (state.nodes.length > 0) renderGraph();
+            } catch (error) {
+                showNotification('❌ 메트릭 처리 실패: ' + error.message, 'error');
+            } finally {
+                hideLoading();
+            }
+        }
+
+        function parseOpenAPI(data) {
+            state.nodes = [];
+            state.links = [];
+            state.groups.clear();
+
+            const nodeMap = new Map();
+            const paths = data.paths || {};
+
+            Object.entries(paths).forEach(([path, methods]) => {
+                Object.entries(methods).forEach(([method, spec]) => {
+                    if (!['get', 'post', 'put', 'patch', 'delete'].includes(method.toLowerCase())) {
+                        return;
+                    }
+
+                    const apiId = `${method.toUpperCase()}_${path}`;
+                    const apiName = spec.summary || spec.operationId || `${method.toUpperCase()} ${path}`;
+                    const group = extractGroup(path, spec);
+
+                    const node = {
+                        id: apiId,
+                        apiName: apiName,
+                        method: method.toUpperCase(),
+                        path: path,
+                        group: group,
+                        description: spec.description || '',
+                        tags: spec.tags || [],
+                        operationId: spec.operationId || '',
+                        parameters: spec.parameters || [],
+                        responses: spec.responses || {}
+                    };
+
+                    state.nodes.push(node);
+                    nodeMap.set(apiId, node);
+
+                    if (!state.groups.has(group)) {
+                        state.groups.set(group, {
+                            name: group,
+                            apis: [],
+                            color: groupColors[group] || 'linear-gradient(135deg, #8892b0 0%, #7a84a7 100%)'
+                        });
+                    }
+                    state.groups.get(group).apis.push(node);
+                });
+            });
+
+            analyzeDependencies();
+            detectCycles();
+            updateUI();
+        }
+
+        function extractGroup(path, spec) {
+            if (spec.tags && spec.tags.length > 0) {
+                return spec.tags[0].toLowerCase();
+            }
+            const parts = path.split('/').filter(p => p && !p.startsWith('{'));
+            return parts[0] || 'general';
+        }
+
+        function analyzeDependencies() {
+            state.links = [];
+            const linkMap = new Map();
+            
+            // Enhanced dependency analysis with advanced patterns
+            state.nodes.forEach(source => {
+                state.nodes.forEach(target => {
+                    if (source.id === target.id) return;
+                    
+                    const sourcePath = source.path.toLowerCase();
+                    const targetPath = target.path.toLowerCase();
+                    const sourceParts = source.path.split('/').filter(p => p && !p.startsWith('{'));
+                    const targetParts = target.path.split('/').filter(p => p && !p.startsWith('{'));
+                    const sourceResource = sourceParts[0] || '';
+                    const targetResource = targetParts[0] || '';
+                    
+                    // Advanced CRUD relationships
+                    if (sourceResource && targetResource) {
+                        // Same resource dependencies
+                        if (sourceResource === targetResource) {
+                            // POST -> GET/PUT/DELETE (Create then Read/Update/Delete)
+                            if (source.method === 'POST' && ['GET', 'PUT', 'DELETE', 'PATCH'].includes(target.method)) {
+                                addLink(linkMap, source.id, target.id, 'crud', 5, '#64ffda', 'Create → CRUD Operations');
+                            }
+                            
+                            // GET -> PUT/DELETE (Read then Modify)
+                            if (source.method === 'GET' && ['PUT', 'DELETE', 'PATCH'].includes(target.method)) {
+                                if (source.path === target.path || 
+                                    (source.path.includes('{') && target.path.includes('{'))) {
+                                    addLink(linkMap, source.id, target.id, 'read-modify', 4, '#82aaff', 'Read → Modify');
+                                }
+                            }
+                            
+                            // List -> Detail pattern
+                            if (source.method === 'GET' && target.method === 'GET') {
+                                if (!source.path.includes('{') && target.path.includes('{')) {
+                                    addLink(linkMap, source.id, target.id, 'list-detail', 4, '#ffcb6b', 'List → Detail');
+                                }
+                            }
+                            
+                            // Detail -> List pattern (navigation back)
+                            if (source.method === 'GET' && target.method === 'GET') {
+                                if (source.path.includes('{') && !target.path.includes('{')) {
+                                    addLink(linkMap, source.id, target.id, 'detail-list', 2, '#ffc777', 'Detail → List');
+                                }
+                            }
+                        }
+                        
+                        // Cross-resource advanced patterns
+                        // Authentication flow
+                        if (source.group === '인증·보안' || source.group.includes('auth')) {
+                            if (source.path.includes('login') || source.path.includes('token')) {
+                                // Login -> Protected resources
+                                if (target.method !== 'GET' || 
+                                    target.path.includes('profile') || 
+                                    target.path.includes('my') ||
+                                    target.path.includes('admin')) {
+                                    addLink(linkMap, source.id, target.id, 'auth-required', 3, '#c792ea', 'Authentication Required');
+                                }
+                            }
+                            
+                            // Logout -> Login (re-authentication flow)
+                            if (source.path.includes('logout') && target.path.includes('login')) {
+                                addLink(linkMap, source.id, target.id, 'reauth-flow', 2, '#c792ea', 'Re-authentication Flow');
+                            }
+                        }
+                        
+                        // User journey patterns
+                        if (source.group === '사용자·멤버' || source.group.includes('user')) {
+                            // User profile -> Orders
+                            if (target.group === '주문·장바구니' || target.group.includes('order')) {
+                                if (source.method === 'GET' && target.method === 'GET') {
+                                    addLink(linkMap, source.id, target.id, 'user-orders', 3, '#89ddff', 'User → Orders View');
+                                }
+                                if (source.method === 'GET' && target.method === 'POST') {
+                                    addLink(linkMap, source.id, target.id, 'user-action', 4, '#89ddff', 'User → Create Order');
+                                }
+                            }
+                            
+                            // User -> Payment history
+                            if (target.group === '구독·결제' || target.group.includes('payment')) {
+                                if (source.method === 'GET' && target.method === 'GET') {
+                                    addLink(linkMap, source.id, target.id, 'user-payments', 3, '#82aaff', 'User → Payment History');
+                                }
+                            }
+                        }
+                        
+                        // E-commerce workflow patterns
+                        if (source.group === '상품·제품' || source.group.includes('product')) {
+                            // Product -> Cart
+                            if ((target.group === '주문·장바구니' || target.path.includes('cart')) && 
+                                source.method === 'GET' && target.method === 'POST') {
+                                addLink(linkMap, source.id, target.id, 'add-to-cart', 5, '#f78c6c', 'Product → Add to Cart');
+                            }
+                            
+                            // Product -> Reviews
+                            if (target.path.includes('review') || target.path.includes('rating')) {
+                                addLink(linkMap, source.id, target.id, 'product-review', 3, '#c3e88d', 'Product → Reviews');
+                            }
+                        }
+                        
+                        // Order workflow
+                        if (source.group === '주문·장바구니' || source.group.includes('order')) {
+                            // Cart/Order -> Payment
+                            if ((target.group === '구독·결제' || target.group.includes('payment')) && 
+                                source.method === 'POST' && target.method === 'POST') {
+                                addLink(linkMap, source.id, target.id, 'checkout-flow', 6, '#f07178', 'Checkout → Payment');
+                            }
+                            
+                            // Order -> Product (reference)
+                            if ((target.group === '상품·제품' || target.group.includes('product')) && 
+                                target.method === 'GET') {
+                                addLink(linkMap, source.id, target.id, 'order-product', 3, '#f78c6c', 'Order → Product Info');
+                            }
+                            
+                            // Order -> Shipping
+                            if (target.path.includes('shipping') || target.path.includes('delivery')) {
+                                addLink(linkMap, source.id, target.id, 'order-shipping', 4, '#b2ccd6', 'Order → Shipping');
+                            }
+                        }
+                        
+                        // Payment patterns
+                        if (source.group === '구독·결제' || source.group.includes('payment')) {
+                            // Payment success -> Order confirmation
+                            if ((target.group === '주문·장바구니' || target.group.includes('order')) && 
+                                source.method === 'POST' && target.method === 'GET') {
+                                addLink(linkMap, source.id, target.id, 'payment-confirm', 4, '#82aaff', 'Payment → Confirmation');
+                            }
+                            
+                            // Payment -> Email notification
+                            if (target.group === '이메일·캠페인' || target.path.includes('email')) {
+                                addLink(linkMap, source.id, target.id, 'payment-notify', 3, '#ffc777', 'Payment → Notification');
+                            }
+                        }
+                        
+                        // Admin control patterns
+                        if (source.group === '설정·관리자' || source.group.includes('admin')) {
+                            // Admin dashboard -> All resources
+                            if (source.path.includes('dashboard') && target.method === 'GET') {
+                                addLink(linkMap, source.id, target.id, 'admin-monitor', 2, '#ff5370', 'Admin Monitoring');
+                            }
+                            
+                            // Admin -> Modify any resource
+                            if (['PUT', 'DELETE', 'PATCH'].includes(target.method)) {
+                                addLink(linkMap, source.id, target.id, 'admin-control', 3, '#ff5370', 'Admin Control');
+                            }
+                        }
+                        
+                        // Reporting patterns
+                        if (source.group === '리포트·대시보드' || source.group.includes('report')) {
+                            // Reports pulling data from various sources
+                            if (target.method === 'GET') {
+                                const reportTypes = ['analytics', 'statistics', 'metrics', 'summary'];
+                                if (reportTypes.some(type => source.path.includes(type))) {
+                                    addLink(linkMap, source.id, target.id, 'data-aggregation', 2, '#c3e88d', 'Data Aggregation');
+                                }
+                            }
+                        }
+                        
+                        // Notification patterns
+                        if (source.group === '이메일·캠페인' || source.path.includes('notification')) {
+                            // Triggered by user actions
+                            if (target.group === '사용자·멤버' && target.method === 'POST') {
+                                addLink(linkMap, target.id, source.id, 'trigger-notification', 2, '#ffc777', 'Trigger Notification');
+                            }
+                        }
+                    }
+                    
+                    // Hierarchical resource patterns
+                    if (isHierarchicalRelation(source.path, target.path)) {
+                        addLink(linkMap, source.id, target.id, 'parent-child', 3, '#c3e88d', 'Parent → Child Resource');
+                    }
+                    
+                    // Webhook/Event patterns
+                    if (source.path.includes('webhook') || source.path.includes('event')) {
+                        if (target.method === 'POST') {
+                            addLink(linkMap, source.id, target.id, 'event-trigger', 2, '#89ddff', 'Event Trigger');
+                        }
+                    }
+                    
+                    // Search patterns
+                    if (source.path.includes('search') && target.method === 'GET') {
+                        if (target.path.includes('{')) {
+                            addLink(linkMap, source.id, target.id, 'search-result', 3, '#b2ccd6', 'Search → Detail');
+                        }
+                    }
+                });
+            });
+            
+            // Convert map to array
+            state.links = Array.from(linkMap.values());
+            console.log(`Generated ${state.links.length} unique dependencies with advanced patterns`);
+        }
+        
+        // Helper function to add links without duplicates
+        function addLink(linkMap, sourceId, targetId, type, weight, color, description) {
+            const key = `${sourceId}->${targetId}`;
+            if (!linkMap.has(key) || linkMap.get(key).weight < weight) {
+                linkMap.set(key, {
+                    source: sourceId,
+                    target: targetId,
+                    type: type,
+                    weight: weight,
+                    color: color,
+                    description: description
+                });
+            }
+        }
+        
+        // Helper function to check hierarchical relations
+        function isHierarchicalRelation(sourcePath, targetPath) {
+            const sourceClean = sourcePath.replace(/\{[^}]+\}/g, '{}');
+            const targetClean = targetPath.replace(/\{[^}]+\}/g, '{}');
+            
+            // Check if target is a sub-resource of source
+            if (targetClean.startsWith(sourceClean) && targetClean.length > sourceClean.length) {
+                const diff = targetClean.substring(sourceClean.length);
+                // Check if it's a direct child (one level deeper)
+                const levels = diff.split('/').filter(p => p && p !== '{}');
+                return levels.length === 1;
+            }
+            return false;
+        }
+
+        function calculateDependencyWeight(source, target) {
+            let weight = 0;
+            
+            // Path similarity
+            const sourceParts = source.path.split('/').filter(p => p && !p.startsWith('{'));
+            const targetParts = target.path.split('/').filter(p => p && !p.startsWith('{'));
+            
+            const commonParts = sourceParts.filter(part => targetParts.includes(part));
+            weight += commonParts.length * 2;
+            
+            // Method relationships
+            if (source.method === 'POST' && target.method === 'GET') weight += 3;
+            if (source.method === 'GET' && ['PUT', 'PATCH', 'DELETE'].includes(target.method)) weight += 2;
+            
+            // Group relationships
+            if (source.group !== target.group) {
+                if (isRelatedGroup(source.group, target.group)) weight += 1;
+            }
+            
+            return weight;
+        }
+
+        function determineDependencyType(source, target) {
+            if (source.method === 'POST' && target.method === 'GET') return 'create-read';
+            if (source.method === 'GET' && target.method === 'PUT') return 'read-update';
+            if (source.group.includes('auth') && target.group !== source.group) return 'auth-required';
+            if (source.group.includes('order') && target.group.includes('payment')) return 'workflow';
+            return 'general';
+        }
+
+        function getDependencyColor(type) {
+            const colors = {
+                'create-read': '#64ffda',
+                'read-update': '#82aaff',
+                'auth-required': '#c792ea',
+                'workflow': '#f07178',
+                'general': '#8892b0'
+            };
+            return colors[type] || '#8892b0';
+        }
+
+        function getDependencyDescription(type) {
+            const descriptions = {
+                'create-read': 'Create → Read',
+                'read-update': 'Read → Update',
+                'auth-required': 'Authentication Required',
+                'workflow': 'Workflow Dependency',
+                'general': 'General Dependency'
+            };
+            return descriptions[type] || 'Dependency';
+        }
+
+        function isRelatedGroup(group1, group2) {
+            const relations = {
+                'user': ['order', 'payment', 'profile'],
+                'order': ['payment', 'product', 'user'],
+                'product': ['order', 'review', 'cart'],
+                'payment': ['order', 'subscription', 'user']
+            };
+            
+            return relations[group1]?.includes(group2) || relations[group2]?.includes(group1);
+        }
+
+        function detectCycles() {
+            // Tarjan's algorithm for cycle detection
+            state.cycles = [];
+            const index = new Map();
+            const lowlink = new Map();
+            const stack = [];
+            const onStack = new Set();
+            let idx = 0;
+
+            function strongconnect(v) {
+                index.set(v, idx);
+                lowlink.set(v, idx);
+                idx++;
+                stack.push(v);
+                onStack.add(v);
+
+                const successors = state.links
+                    .filter(l => l.source === v)
+                    .map(l => l.target);
+
+                for (const w of successors) {
+                    if (!index.has(w)) {
+                        strongconnect(w);
+                        lowlink.set(v, Math.min(lowlink.get(v), lowlink.get(w)));
+                    } else if (onStack.has(w)) {
+                        lowlink.set(v, Math.min(lowlink.get(v), index.get(w)));
+                    }
+                }
+
+                if (lowlink.get(v) === index.get(v)) {
+                    const component = [];
+                    let w;
+                    do {
+                        w = stack.pop();
+                        onStack.delete(w);
+                        component.push(w);
+                    } while (w !== v);
+
+                    if (component.length > 1) {
+                        state.cycles.push(component);
+                    }
+                }
+            }
+
+            for (const node of state.nodes) {
+                if (!index.has(node.id)) {
+                    strongconnect(node.id);
+                }
+            }
+        }
+
+        function parseMetrics(data) {
+            state.metrics.clear();
+            
+            if (Array.isArray(data)) {
+                data.forEach(metric => {
+                    const key = metric.id || metric.apiId || `${metric.method}_${metric.path}`;
+                    state.metrics.set(key, {
+                        calls: parseInt(metric.calls || metric.count || 0),
+                        p95: parseFloat(metric.p95 || metric.latency || 0),
+                        errorRate: parseFloat(metric.errorRate || metric.errors || 0)
+                    });
+                });
+            }
+        }
+
+        function renderGraph() {
+            switch (state.currentView) {
+                case 'matrix':
+                    renderMatrix();
+                    break;
+                case 'timeline':
+                    renderTimeline();
+                    break;
+                case '3d':
+                    render3D();
+                    break;
+                case 'group':
+                    renderGroupView();
+                    break;
+                default:
+                    renderDetailView();
+            }
+        }
+
+        function renderGroupView() {
+            // Clear and show graph
+            document.getElementById('graph-svg').style.display = 'block';
+            document.getElementById('matrix-container').style.display = 'none';
+            
+            state.g.selectAll('*').remove();
+
+            const canvas = document.getElementById('canvas');
+            const width = canvas.clientWidth;
+            const height = canvas.clientHeight;
+
+            const groupNodes = Array.from(state.groups.values()).map(g => ({
+                ...g,
+                id: g.name,
+                radius: Math.sqrt(g.apis.length) * 25 + 40
+            }));
+
+            // Calculate group links
+            const groupLinkMap = new Map();
+            state.links.forEach(link => {
+                const sourceNode = state.nodes.find(n => n.id === link.source);
+                const targetNode = state.nodes.find(n => n.id === link.target);
+                if (sourceNode && targetNode && sourceNode.group !== targetNode.group) {
+                    const key = `${sourceNode.group}->${targetNode.group}`;
+                    if (!groupLinkMap.has(key)) {
+                        groupLinkMap.set(key, {
+                            source: sourceNode.group,
+                            target: targetNode.group,
+                            count: 0,
+                            weight: 0
+                        });
+                    }
+                    const groupLink = groupLinkMap.get(key);
+                    groupLink.count++;
+                    groupLink.weight += link.weight || 1;
+                }
+            });
+
+            const groupLinks = Array.from(groupLinkMap.values());
+
+            // Enhanced force simulation
+            state.simulation = d3.forceSimulation(groupNodes)
+                .force('link', d3.forceLink(groupLinks).id(d => d.id).distance(250))
+                .force('charge', d3.forceManyBody().strength(-1000))
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .force('collision', d3.forceCollide().radius(d => d.radius + 30));
+
+            const linkGroup = state.g.append('g').attr('class', 'links');
+            const nodeGroup = state.g.append('g').attr('class', 'nodes');
+
+            // Render straight lines for group view
+            const link = linkGroup.selectAll('.link')
+                .data(groupLinks)
+                .enter().append('line')  // Changed from path to line
+                .attr('class', 'link')
+                .attr('stroke', '#666')
+                .attr('stroke-width', d => Math.max(1, Math.log(d.count + 1) * 2))
+                .attr('stroke-opacity', 0.6)
+                .attr('marker-end', 'url(#arrow-normal)');
+
+            // Render nodes with gradients - create proper gradient definitions
+            const gradientDefs = state.svg.select('defs');
+            
+            groupNodes.forEach(gNode => {
+                const gradientId = `gradient-group-${gNode.id.replace(/[^a-zA-Z0-9]/g, '')}`;
+                const gradient = gradientDefs.append('linearGradient')
+                    .attr('id', gradientId)
+                    .attr('x1', '0%')
+                    .attr('y1', '0%')
+                    .attr('x2', '100%')
+                    .attr('y2', '100%');
+                
+                const baseColor = groupColors[gNode.name] || '#8892b0';
+                gradient.append('stop')
+                    .attr('offset', '0%')
+                    .attr('stop-color', baseColor)
+                    .attr('stop-opacity', 0.8);
+                
+                gradient.append('stop')
+                    .attr('offset', '100%')
+                    .attr('stop-color', d3.color(baseColor).darker(0.5))
+                    .attr('stop-opacity', 0.8);
+            });
+
+            // Render nodes
+            const node = nodeGroup.selectAll('.node')
+                .data(groupNodes)
+                .enter().append('g')
+                .attr('class', 'node')
+                .call(drag(state.simulation))
+                .on('click', (event, d) => {
+                    event.stopPropagation();
+                    focusGroup(d.name);
+                    highlightGroupConnectionsOnClick(d.name, linkGroup, nodeGroup, groupLinks);
+                    // Show group info in right panel
+                    updateGroupInfo(groups.get(d.name));
+                })
+                .on('mouseover', function(event, d) {
+                    showGroupTooltip(event, d);
+                    highlightGroupConnections(d.name, linkGroup, nodeGroup, groupLinks);
+                })
+                .on('mouseout', function() {
+                    hideTooltip();
+                    resetHighlight(linkGroup, nodeGroup);
+                });
+
+            // Add gradient circles
+            node.append('circle')
+                .attr('r', d => d.radius)
+                .attr('fill', d => {
+                    const gradientId = `gradient-group-${d.id.replace(/[^a-zA-Z0-9]/g, '')}`;
+                    return `url(#${gradientId})`;
+                })
+                .attr('stroke', '#fff')
+                .attr('stroke-width', 2)
+                .style('filter', 'drop-shadow(0 4px 8px rgba(0,0,0,0.4))');
+
+            // Add group labels
+            node.append('text')
+                .attr('dy', -5)
+                .attr('text-anchor', 'middle')
+                .style('font-size', '16px')
+                .style('font-weight', '600')
+                .style('fill', '#ffffff')
+                .text(d => d.name);
+
+            node.append('text')
+                .attr('dy', 15)
+                .attr('text-anchor', 'middle')
+                .style('font-size', '12px')
+                .style('fill', '#8892b0')
+                .text(d => `${d.apis.length} APIs`);
+
+            // Animation tick with straight lines
+            state.simulation.on('tick', () => {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+
+                node.attr('transform', d => `translate(${d.x},${d.y})`);
+            });
+
+            if (state.animationEnabled) {
+                animateNodes(node);
+            }
+        }
+
+        function renderDetailView() {
+            document.getElementById('graph-svg').style.display = 'block';
+            document.getElementById('matrix-container').style.display = 'none';
+            
+            state.g.selectAll('*').remove();
+
+            const canvas = document.getElementById('canvas');
+            const width = canvas.clientWidth;
+            const height = canvas.clientHeight;
+
+            const simNodes = state.nodes.map(n => ({...n}));
+            const simLinks = state.links.map(l => ({...l}));
+
+            // Apply filters
+            const filteredNodes = applyNodeFilters(simNodes);
+            const filteredLinks = simLinks.filter(l => {
+                const sourceIncluded = filteredNodes.some(n => n.id === l.source);
+                const targetIncluded = filteredNodes.some(n => n.id === l.target);
+                return sourceIncluded && targetIncluded;
+            });
+
+            state.simulation = d3.forceSimulation(filteredNodes)
+                .force('link', d3.forceLink(filteredLinks)
+                    .id(d => d.id)
+                    .distance(d => 150 + (d.weight * 15)))
+                .force('charge', d3.forceManyBody().strength(-800))
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .force('collision', d3.forceCollide().radius(40))
+                .force('x', d3.forceX(width / 2).strength(0.05))
+                .force('y', d3.forceY(height / 2).strength(0.05));
+
+            const linkGroup = state.g.append('g').attr('class', 'links');
+            const nodeGroup = state.g.append('g').attr('class', 'nodes');
+
+            // Render straight lines instead of curves
+            const link = linkGroup.selectAll('.link')
+                .data(filteredLinks)
+                .enter().append('line')  // Changed from path to line
+                .attr('class', 'link')
+                .attr('stroke', d => d.color || '#666')
+                .attr('stroke-width', d => Math.max(1.5, Math.sqrt(d.weight) * 1.5))
+                .attr('stroke-opacity', 0.6)
+                .attr('marker-end', d => `url(#arrow-${d.type || 'normal'})`)
+                .attr('data-source', d => d.source)
+                .attr('data-target', d => d.target);
+
+            // Create node groups
+            const node = nodeGroup.selectAll('.node')
+                .data(filteredNodes)
+                .enter().append('g')
+                .attr('class', 'node')
+                .attr('data-node-id', d => d.id)
+                .call(drag(state.simulation))
+                .on('click', (event, d) => {
+                    event.stopPropagation();
+                    focusNode(d);
+                    highlightNodeConnectionsEnhanced(d, linkGroup, nodeGroup, filteredLinks);
+                })
+                .on('mouseover', function(event, d) {
+                    showNodeTooltip(event, d);
+                    highlightNodeConnectionsEnhanced(d, linkGroup, nodeGroup, filteredLinks);
+                })
+                .on('mouseout', function() {
+                    hideTooltip();
+                    if (!state.focusedNode) {
+                        resetHighlight(linkGroup, nodeGroup);
+                    }
+                });
+
+            // Add circles with dynamic sizing and group colors
+            node.append('circle')
+                .attr('r', d => {
+                    const metric = state.metrics.get(d.id);
+                    const baseSize = 25;
+                    if (metric) {
+                        return Math.max(20, Math.min(40, baseSize + Math.sqrt(metric.calls / 100)));
+                    }
+                    return baseSize;
+                })
+                .attr('fill', d => {
+                    const color = groupColors[d.group] || '#8892b0';
+                    return color;
+                })
+                .attr('fill-opacity', 0.8)
+                .attr('stroke', '#fff')
+                .attr('stroke-width', 2)
+                .style('filter', d => {
+                    const metric = state.metrics.get(d.id);
+                    if (metric && metric.errorRate > 0.05) {
+                        return 'drop-shadow(0 0 10px rgba(240, 113, 120, 0.8))';
+                    }
+                    return 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))';
+                });
+
+            // Add method labels
+            node.append('text')
+                .attr('dy', -30)
+                .attr('text-anchor', 'middle')
+                .style('font-size', '12px')
+                .style('font-weight', 'bold')
+                .style('fill', d => {
+                    const methodColors = {
+                        'GET': '#64ffda',
+                        'POST': '#f07178',
+                        'PUT': '#ffcb6b',
+                        'PATCH': '#ffcb6b',
+                        'DELETE': '#c792ea'
+                    };
+                    return methodColors[d.method] || '#8892b0';
+                })
+                .text(d => d.method);
+
+            // Add API name
+            node.append('text')
+                .attr('dy', 4)
+                .attr('text-anchor', 'middle')
+                .style('font-size', '11px')
+                .style('fill', '#ffffff')
+                .text(d => {
+                    const name = d.apiName || d.path;
+                    return name.length > 25 ? name.substring(0, 25) + '...' : name;
+                });
+
+            // Add path
+            node.append('text')
+                .attr('dy', 45)
+                .attr('text-anchor', 'middle')
+                .style('font-size', '9px')
+                .style('fill', '#8892b0')
+                .text(d => {
+                    return d.path.length > 30 ? '...' + d.path.substring(d.path.length - 27) : d.path;
+                });
+
+            // Add warning indicators
+            node.each(function(d) {
+                const metric = state.metrics.get(d.id);
+                if (metric) {
+                    if (metric.errorRate > 0.05) {
+                        d3.select(this).append('circle')
+                            .attr('r', 5)
+                            .attr('cx', 20)
+                            .attr('cy', -20)
+                            .attr('fill', '#f07178')
+                            .style('animation', 'pulse 2s infinite');
+                    }
+                    if (metric.p95 > 1000) {
+                        d3.select(this).append('text')
+                            .attr('x', -20)
+                            .attr('y', -20)
+                            .style('font-size', '16px')
+                            .text('⚠️');
+                    }
+                }
+            });
+
+            // Animation tick with straight lines
+            state.simulation.on('tick', () => {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+
+                node.attr('transform', d => `translate(${d.x},${d.y})`);
+            });
+
+            if (state.animationEnabled) {
+                animateLinks(link);
+            }
+        }
+
+        function renderMatrix() {
+            document.getElementById('graph-svg').style.display = 'none';
+            document.getElementById('matrix-container').style.display = 'block';
+            
+            // Hide legend in matrix view
+            const legendEl = document.getElementById('legend');
+            if (legendEl) {
+                legendEl.style.display = 'none';
+            }
+
+            const container = document.getElementById('matrix-container');
+            container.innerHTML = '';
+
+            const margin = {top: 120, right: 60, bottom: 60, left: 120};
+            const width = container.clientWidth - margin.left - margin.right;
+            const height = container.clientHeight - margin.top - margin.bottom;
+
+            const svg = d3.select(container)
+                .append('svg')
+                .attr('width', width + margin.left + margin.right)
+                .attr('height', height + margin.top + margin.bottom)
+                .style('background', '#0a0a0a');  // Dark background
+
+            const g = svg.append('g')
+                .attr('transform', `translate(${margin.left},${margin.top})`);
+
+            // Add zoom functionality to matrix
+            const matrixZoom = d3.zoom()
+                .scaleExtent([0.5, 5])
+                .on('zoom', (event) => {
+                    g.attr('transform', `translate(${margin.left},${margin.top}) scale(${event.transform.k})`);
+                });
+
+            svg.call(matrixZoom);
+
+            const groupNames = Array.from(state.groups.keys());
+            const cellSize = Math.min(width / groupNames.length, height / groupNames.length, 60);
+
+            // Build matrix data
+            const matrix = [];
+            groupNames.forEach(source => {
+                groupNames.forEach(target => {
+                    const connections = state.links.filter(l => {
+                        const sourceNode = state.nodes.find(n => n.id === l.source);
+                        const targetNode = state.nodes.find(n => n.id === l.target);
+                        return sourceNode?.group === source && targetNode?.group === target;
+                    });
+                    
+                    matrix.push({
+                        source: source,
+                        target: target,
+                        value: connections.length,
+                        weight: connections.reduce((sum, c) => sum + (c.weight || 1), 0)
+                    });
+                });
+            });
+
+            const xScale = d3.scaleBand()
+                .domain(groupNames)
+                .range([0, groupNames.length * cellSize])
+                .padding(0.05);
+
+            const yScale = d3.scaleBand()
+                .domain(groupNames)
+                .range([0, groupNames.length * cellSize])
+                .padding(0.05);
+
+            // Enhanced color scale with better contrast
+            const colorScale = d3.scaleSequential()
+                .domain([0, d3.max(matrix, d => d.value)])
+                .interpolator(t => d3.interpolateViridis(t * 0.8 + 0.2));  // Brighter colors
+
+            // Add cells
+            g.selectAll('.matrix-cell')
+                .data(matrix)
+                .enter().append('rect')
+                .attr('class', 'matrix-cell')
+                .attr('x', d => xScale(d.target))
+                .attr('y', d => yScale(d.source))
+                .attr('width', xScale.bandwidth())
+                .attr('height', yScale.bandwidth())
+                .attr('fill', d => d.value > 0 ? colorScale(d.value) : '#1a1a2e')
+                .attr('stroke', '#3a3a5a')
+                .attr('stroke-width', 1)
+                .on('click', (event, d) => showMatrixDetail(d))
+                .on('mouseover', (event, d) => showMatrixTooltip(event, d))
+                .on('mouseout', hideTooltip);
+
+            // Add text values with contrasting colors
+            g.selectAll('.matrix-text')
+                .data(matrix.filter(d => d.value > 0))
+                .enter().append('text')
+                .attr('x', d => xScale(d.target) + xScale.bandwidth() / 2)
+                .attr('y', d => yScale(d.source) + yScale.bandwidth() / 2)
+                .attr('dy', 4)
+                .attr('text-anchor', 'middle')
+                .style('fill', d => {
+                    // Use white text for dark backgrounds, dark text for light backgrounds
+                    const bgColor = colorScale(d.value);
+                    const rgb = d3.rgb(bgColor);
+                    const luminance = (0.299 * rgb.r + 0.587 * rgb.g + 0.114 * rgb.b) / 255;
+                    return luminance > 0.5 ? '#0a0a0a' : '#ffffff';
+                })
+                .style('font-size', '12px')
+                .style('font-weight', '700')
+                .style('pointer-events', 'none')
+                .text(d => d.value);
+
+            // Add labels with bright colors
+            g.selectAll('.row-label')
+                .data(groupNames)
+                .enter().append('text')
+                .attr('class', 'matrix-label')
+                .attr('x', -10)
+                .attr('y', d => yScale(d) + yScale.bandwidth() / 2)
+                .attr('text-anchor', 'end')
+                .attr('dy', 4)
+                .style('font-size', '12px')
+                .style('fill', '#64ffda')  // Bright cyan for labels
+                .style('font-weight', '600')
+                .text(d => d);
+
+            g.selectAll('.col-label')
+                .data(groupNames)
+                .enter().append('text')
+                .attr('class', 'matrix-label')
+                .attr('x', d => xScale(d) + xScale.bandwidth() / 2)
+                .attr('y', -10)
+                .attr('text-anchor', 'start')
+                .attr('transform', d => `rotate(-45, ${xScale(d) + xScale.bandwidth() / 2}, -10)`)
+                .style('font-size', '12px')
+                .style('fill', '#64ffda')  // Bright cyan for labels
+                .style('font-weight', '600')
+                .text(d => d);
+        }
+
+        function renderTimeline() {
+            // Timeline view implementation
+            document.getElementById('graph-svg').style.display = 'none';
+            document.getElementById('matrix-container').style.display = 'none';
+            
+            // Placeholder for timeline implementation
+            const container = document.getElementById('canvas');
+            container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #8892b0; font-size: 18px;">타임라인 뷰 (개발 중)</div>';
+        }
+
+        function render3D() {
+            // 3D view implementation
+            document.getElementById('graph-svg').style.display = 'none';
+            document.getElementById('matrix-container').style.display = 'none';
+            
+            // Placeholder for 3D implementation
+            const container = document.getElementById('canvas');
+            container.innerHTML = '<div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #8892b0; font-size: 18px;">3D 뷰 (개발 중)</div>';
+        }
+
+        // Helper Functions
+        function drag(simulation) {
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+
+            return d3.drag()
+                .on('start', dragstarted)
+                .on('drag', dragged)
+                .on('end', dragended);
+        }
+
+        function focusNode(node) {
+            state.focusedNode = node;
+            state.focusedGroup = null;
+            updateNodeInfo(node);
+            updateImpact(node);
+            const riskScore = calculateRiskScore(node);
+            updateRecommendations(node, riskScore);
+            addToHistory('node', node);
+        }
+
+        function focusGroup(groupName) {
+            state.focusedGroup = groupName;
+            state.focusedNode = null;
+            const group = state.groups.get(groupName);
+            if (group) {
+                updateGroupInfo(group);
+                addToHistory('group', group);
+            }
+            updateGroupsList();
+        }
+
+        function clearFocus() {
+            state.focusedNode = null;
+            state.focusedGroup = null;
+            
+            // Reset all visual states
+            const nodeGroup = state.g?.select('.nodes');
+            const linkGroup = state.g?.select('.links');
+            
+            if (nodeGroup) {
+                nodeGroup.selectAll('.node')
+                    .style('opacity', 1)
+                    .select('circle')
+                    .style('stroke', '#fff')
+                    .style('stroke-width', 2);
+                
+                nodeGroup.selectAll('text')
+                    .style('opacity', 1);
+            }
+            
+            if (linkGroup) {
+                linkGroup.selectAll('.link')
+                    .style('stroke', d => d.color || '#666')
+                    .style('stroke-dasharray', 'none')
+                    .style('stroke-width', d => Math.max(1.5, Math.sqrt(d.weight || 1) * 1.5))
+                    .style('stroke-opacity', 0.6)
+                    .attr('marker-end', d => `url(#arrow-${d.type || 'normal'})`);
+            }
+            
+            document.getElementById('node-info').style.display = 'none';
+            document.getElementById('default-info').style.display = 'block';
+            updateGroupsList();
+        }
+
+        function updateNodeInfo(node) {
+            document.getElementById('default-info').style.display = 'none';
+            document.getElementById('node-info').style.display = 'block';
+
+            document.getElementById('selected-name').textContent = node.apiName;
+            document.getElementById('selected-details').innerHTML = `
+                <div><strong>메소드:</strong> ${node.method}</div>
+                <div><strong>경로:</strong> ${node.path}</div>
+                <div><strong>그룹:</strong> ${node.group}</div>
+                ${node.description ? `<div><strong>설명:</strong> ${node.description}</div>` : ''}
+                ${node.operationId ? `<div><strong>Operation ID:</strong> ${node.operationId}</div>` : ''}
+            `;
+
+            const riskScore = calculateRiskScore(node);
+            document.getElementById('risk-score').textContent = riskScore.score.toFixed(1);
+            document.getElementById('risk-gauge').style.width = `${riskScore.score * 10}%`;
+            document.getElementById('risk-detail').innerHTML = riskScore.details.join('<br>');
+
+            updateDependencies(node);
+            updateImpact(node);
+            updateRecommendations(node, riskScore);
+        }
+
+        function updateGroupInfo(group) {
+            document.getElementById('default-info').style.display = 'none';
+            document.getElementById('node-info').style.display = 'block';
+
+            document.getElementById('selected-name').textContent = group.name;
+            document.getElementById('selected-details').innerHTML = `
+                <div><strong>API 수:</strong> ${group.apis.length}</div>
+                <div><strong>메소드 분포:</strong></div>
+                ${getMethodDistribution(group.apis)}
+            `;
+
+            const avgRisk = group.apis.reduce((sum, api) => 
+                sum + calculateRiskScore(api).score, 0) / group.apis.length;
+            
+            document.getElementById('risk-score').textContent = avgRisk.toFixed(1);
+            document.getElementById('risk-gauge').style.width = `${avgRisk * 10}%`;
+            document.getElementById('risk-detail').innerHTML = `그룹 평균 위험도: ${avgRisk.toFixed(1)}`;
+
+            updateGroupDependencies(group);
+        }
+
+        function getMethodDistribution(apis) {
+            const dist = apis.reduce((acc, api) => {
+                acc[api.method] = (acc[api.method] || 0) + 1;
+                return acc;
+            }, {});
+            
+            return Object.entries(dist)
+                .map(([method, count]) => `<div style="margin-left: 10px;">${method}: ${count}</div>`)
+                .join('');
+        }
+
+        function calculateRiskScore(node) {
+            const details = [];
+            let score = 0;
+
+            // Dependency score
+            const inDeps = state.links.filter(l => l.target === node.id).length;
+            const outDeps = state.links.filter(l => l.source === node.id).length;
+            const depScore = Math.min(4, Math.log1p(inDeps * 1.5 + outDeps) * 1.2);
+            score += depScore;
+            details.push(`• 의존성 점수: ${depScore.toFixed(1)}/4.0`);
+
+            // Method criticality
+            const methodScores = {
+                'DELETE': 2.0,
+                'PUT': 1.0,
+                'PATCH': 1.0,
+                'POST': 0.5,
+                'GET': 0
+            };
+            const methodScore = methodScores[node.method] || 0;
+            score += methodScore;
+            if (methodScore > 0) {
+                details.push(`• 메소드 위험도 (${node.method}): +${methodScore}`);
+            }
+
+            // Group criticality
+            if (node.group.includes('auth') || node.group.includes('인증')) {
+                score += 2.0;
+                details.push(`• 그룹 중요도 (인증/보안): +2.0`);
+            } else if (node.group.includes('payment') || node.group.includes('결제')) {
+                score += 1.5;
+                details.push(`• 그룹 중요도 (결제): +1.5`);
+            }
+
+            // Metrics score
+            const metric = state.metrics.get(node.id);
+            if (metric) {
+                if (metric.errorRate > 0.05) {
+                    score += 1.5;
+                    details.push(`• 높은 오류율 (${(metric.errorRate * 100).toFixed(1)}%): +1.5`);
+                }
+                if (metric.p95 > 1000) {
+                    score += 1.0;
+                    details.push(`• 높은 지연시간 (${metric.p95}ms): +1.0`);
+                }
+            }
+
+            // Cycle involvement
+            const inCycle = state.cycles.some(cycle => cycle.includes(node.id));
+            if (inCycle) {
+                score += 1.0;
+                details.push(`• 순환 의존성 포함: +1.0`);
+            }
+
+            score = Math.min(10, score);
+            const level = score < 3 ? '낮음' : score < 7 ? '중간' : '높음';
+            details.unshift(`<strong>위험도: ${level}</strong>`);
+
+            return { score, details, level };
+        }
+
+        function updateDependencies(node) {
+            const inDeps = [];
+            const outDeps = [];
+
+            state.links.forEach(link => {
+                if (link.target === node.id) {
+                    const sourceNode = state.nodes.find(n => n.id === link.source);
+                    if (sourceNode) {
+                        inDeps.push({
+                            node: sourceNode,
+                            type: link.type,
+                            weight: link.weight
+                        });
+                    }
+                } else if (link.source === node.id) {
+                    const targetNode = state.nodes.find(n => n.id === link.target);
+                    if (targetNode) {
+                        outDeps.push({
+                            node: targetNode,
+                            type: link.type,
+                            weight: link.weight
+                        });
+                    }
+                }
+            });
+
+            const inList = document.getElementById('in-dependencies');
+            inList.innerHTML = inDeps.length === 0 ? '<div style="color: #8892b0;">없음</div>' : '';
+            inDeps.forEach(dep => {
+                const item = document.createElement('div');
+                item.className = 'dependency-item incoming';
+                item.innerHTML = `
+                    <div>${dep.node.apiName}</div>
+                    <div class="dependency-type">타입: ${dep.type} | 가중치: ${dep.weight}</div>
+                `;
+                item.addEventListener('click', () => focusNode(dep.node));
+                inList.appendChild(item);
+            });
+
+            const outList = document.getElementById('out-dependencies');
+            outList.innerHTML = outDeps.length === 0 ? '<div style="color: #8892b0;">없음</div>' : '';
+            outDeps.forEach(dep => {
+                const item = document.createElement('div');
+                item.className = 'dependency-item outgoing';
+                item.innerHTML = `
+                    <div>${dep.node.apiName}</div>
+                    <div class="dependency-type">타입: ${dep.type} | 가중치: ${dep.weight}</div>
+                `;
+                item.addEventListener('click', () => focusNode(dep.node));
+                outList.appendChild(item);
+            });
+        }
+
+        function updateGroupDependencies(group) {
+            // Similar to updateDependencies but for groups
+            const inGroups = new Map();
+            const outGroups = new Map();
+
+            group.apis.forEach(api => {
+                state.links.forEach(link => {
+                    if (link.target === api.id) {
+                        const sourceNode = state.nodes.find(n => n.id === link.source);
+                        if (sourceNode && sourceNode.group !== group.name) {
+                            if (!inGroups.has(sourceNode.group)) {
+                                inGroups.set(sourceNode.group, 0);
+                            }
+                            inGroups.set(sourceNode.group, inGroups.get(sourceNode.group) + 1);
+                        }
+                    } else if (link.source === api.id) {
+                        const targetNode = state.nodes.find(n => n.id === link.target);
+                        if (targetNode && targetNode.group !== group.name) {
+                            if (!outGroups.has(targetNode.group)) {
+                                outGroups.set(targetNode.group, 0);
+                            }
+                            outGroups.set(targetNode.group, outGroups.get(targetNode.group) + 1);
+                        }
+                    }
+                });
+            });
+
+            const inList = document.getElementById('in-dependencies');
+            inList.innerHTML = inGroups.size === 0 ? '<div style="color: #8892b0;">없음</div>' : '';
+            inGroups.forEach((count, groupName) => {
+                const item = document.createElement('div');
+                item.className = 'dependency-item incoming';
+                item.innerHTML = `
+                    <div>${groupName}</div>
+                    <div class="dependency-type">${count}개 연결</div>
+                `;
+                item.addEventListener('click', () => focusGroup(groupName));
+                inList.appendChild(item);
+            });
+
+            const outList = document.getElementById('out-dependencies');
+            outList.innerHTML = outGroups.size === 0 ? '<div style="color: #8892b0;">없음</div>' : '';
+            outGroups.forEach((count, groupName) => {
+                const item = document.createElement('div');
+                item.className = 'dependency-item outgoing';
+                item.innerHTML = `
+                    <div>${groupName}</div>
+                    <div class="dependency-type">${count}개 연결</div>
+                `;
+                item.addEventListener('click', () => focusGroup(groupName));
+                outList.appendChild(item);
+            });
+        }
+
+        function updateImpact(node) {
+            const impacted = new Set();
+            const toVisit = [node.id];
+            const visited = new Set();
+
+            while (toVisit.length > 0) {
+                const current = toVisit.shift();
+                if (visited.has(current)) continue;
+                visited.add(current);
+
+                state.links.forEach(link => {
+                    if (link.source === current && !visited.has(link.target)) {
+                        impacted.add(link.target);
+                        if (visited.size < 20) { // Limit depth
+                            toVisit.push(link.target);
+                        }
+                    }
+                });
+            }
+
+            const detail = document.getElementById('impact-detail');
+            detail.innerHTML = `
+                <div>직접 영향: ${state.links.filter(l => l.source === node.id).length}개 API</div>
+                <div>간접 영향: ${impacted.size}개 API</div>
+                <div style="margin-top: 12px; color: #8892b0;">
+                    이 API를 변경하면 ${impacted.size}개의 다른 API에 영향을 줄 수 있습니다.
+                </div>
+            `;
+        }
+
+        function updateRecommendations(node, riskScore) {
+            const recommendations = [];
+            
+            if (riskScore.score >= 7) {
+                recommendations.push('⚠️ 높은 위험도: 변경 시 신중한 검토 필요');
+            }
+            
+            const metric = state.metrics.get(node.id);
+            if (metric) {
+                if (metric.errorRate > 0.05) {
+                    recommendations.push('🔧 오류율 개선이 필요합니다');
+                }
+                if (metric.p95 > 1000) {
+                    recommendations.push('⚡ 성능 최적화를 권장합니다');
+                }
+            }
+            
+            const inCycle = state.cycles.some(cycle => cycle.includes(node.id));
+            if (inCycle) {
+                recommendations.push('🔄 순환 의존성 제거를 검토하세요');
+            }
+            
+            const inDeps = state.links.filter(l => l.target === node.id).length;
+            if (inDeps > 5) {
+                recommendations.push('📊 의존성이 많습니다. 분리를 고려하세요');
+            }
+            
+            const recEl = document.getElementById('recommendations');
+            if (recommendations.length > 0) {
+                recEl.innerHTML = '<strong>권장사항:</strong><br>' + recommendations.join('<br>');
+            } else {
+                recEl.innerHTML = '<strong>✅ 양호한 상태입니다</strong>';
+            }
+        }
+
+        function updateUI() {
+            updateStats();
+            updateGroupsList();
+            updateLegend();
+        }
+
+        function updateStats() {
+            document.getElementById('stat-groups').textContent = state.groups.size;
+            document.getElementById('stat-apis').textContent = state.nodes.length;
+            document.getElementById('stat-deps').textContent = state.links.length;
+            document.getElementById('stat-cycles').textContent = state.cycles.length;
+        }
+
+        function updateGroupsList() {
+            const listEl = document.getElementById('groups-list');
+            listEl.innerHTML = '';
+
+            if (state.groups.size === 0) {
+                listEl.innerHTML = '<div style="text-align: center; color: #8892b0; padding: 20px;">데이터를 로드하세요</div>';
+                return;
+            }
+
+            state.groups.forEach((group, groupName) => {
+                const item = document.createElement('div');
+                item.className = 'group-item';
+                if (state.focusedGroup === groupName) {
+                    item.classList.add('active');
+                }
+                item.innerHTML = `
+                    <span class="group-name">${groupName}</span>
+                    <span class="group-count">${group.apis.length}</span>
+                `;
+                item.addEventListener('click', () => focusGroup(groupName));
+                listEl.appendChild(item);
+            });
+        }
+
+        function updateLegend() {
+            const legendEl = document.getElementById('legend');
+            const legendContent = document.getElementById('legend-content');
+            
+            if (!legendEl || !legendContent) return;
+            
+            if (state.groups.size === 0) {
+                legendEl.style.display = 'none';
+                return;
+            }
+            
+            legendEl.style.display = 'block';
+            legendContent.innerHTML = '';
+            
+            state.groups.forEach((group, groupName) => {
+                const item = document.createElement('div');
+                item.className = 'legend-item';
+                const color = groupColors[groupName] || '#8892b0';
+                item.innerHTML = `
+                    <div class="legend-color" style="background: ${color};"></div>
+                    <span>${groupName} (${group.apis.length})</span>
+                `;
+                item.style.cursor = 'pointer';
+                item.addEventListener('click', () => focusGroup(groupName));
+                legendContent.appendChild(item);
+            });
+        }
+
+        function toggleLegend() {
+            const content = document.getElementById('legend-content');
+            const toggle = document.getElementById('legend-toggle');
+            
+            if (content && toggle) {
+                if (content.style.display === 'none') {
+                    content.style.display = 'block';
+                    toggle.textContent = '▼';
+                } else {
+                    content.style.display = 'none';
+                    toggle.textContent = '▶';
+                }
+            }
+        }
+
+        // Filter functions
+        function applyFilters() {
+            state.filters.method = document.getElementById('method-filter').value;
+            state.filters.risk = document.getElementById('risk-filter').value;
+            renderGraph();
+        }
+
+        function applyNodeFilters(nodes) {
+            return nodes.filter(node => {
+                // Method filter
+                if (state.filters.method && node.method !== state.filters.method) {
+                    return false;
+                }
+                
+                // Risk filter
+                if (state.filters.risk) {
+                    const risk = calculateRiskScore(node).score;
+                    if (state.filters.risk === 'high' && risk < 7) return false;
+                    if (state.filters.risk === 'medium' && (risk < 3 || risk >= 7)) return false;
+                    if (state.filters.risk === 'low' && risk >= 3) return false;
+                }
+                
+                // Search filter
+                if (state.filters.search) {
+                    const query = state.filters.search.toLowerCase();
+                    return node.apiName.toLowerCase().includes(query) ||
+                           node.path.toLowerCase().includes(query) ||
+                           node.group.toLowerCase().includes(query);
+                }
+                
+                return true;
+            });
+        }
+
+        function handleSearch(event) {
+            state.filters.search = event.target.value;
+            renderGraph();
+        }
+
+        // View switching
+        function switchView(view) {
+            state.currentView = view;
+            
+            document.querySelectorAll('.view-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.view === view);
+            });
+            
+            // Show/hide legend based on view
+            const legendEl = document.getElementById('legend');
+            if (legendEl) {
+                if (view === 'matrix' || view === 'timeline' || view === '3d') {
+                    legendEl.style.display = 'none';
+                } else {
+                    legendEl.style.display = 'block';
+                }
+            }
+
+            renderGraph();
+        }
+
+        // Export functions
+        function toggleExportMenu() {
+            const menu = document.getElementById('export-menu');
+            menu.classList.toggle('show');
+        }
+
+        function exportJSON() {
+            const data = {
+                nodes: state.nodes,
+                links: state.links,
+                groups: Array.from(state.groups.entries()),
+                metrics: Array.from(state.metrics.entries()),
+                cycles: state.cycles
+            };
+            
+            downloadFile('api-dependencies.json', JSON.stringify(data, null, 2));
+            toggleExportMenu();
+        }
+
+        function exportCSV() {
+            let csv = 'Source,Target,Type,Weight\n';
+            state.links.forEach(link => {
+                csv += `"${link.source}","${link.target}","${link.type}",${link.weight}\n`;
+            });
+            
+            downloadFile('api-dependencies.csv', csv);
+            toggleExportMenu();
+        }
+
+        function exportSVG() {
+            const svgEl = document.getElementById('graph-svg');
+            const svgData = new XMLSerializer().serializeToString(svgEl);
+            const blob = new Blob([svgData], { type: 'image/svg+xml' });
+            const url = URL.createObjectURL(blob);
+            
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'api-dependency-graph.svg';
+            a.click();
+            
+            URL.revokeObjectURL(url);
+            toggleExportMenu();
+        }
+
+        function exportPNG() {
+            // Implementation for PNG export
+            showNotification('PNG 내보내기는 준비 중입니다', 'info');
+            toggleExportMenu();
+        }
+
+        function exportReport() {
+            let report = '# API 의존성 분석 리포트\n\n';
+            report += `생성일: ${new Date().toLocaleString('ko-KR')}\n\n`;
+            report += `## 요약\n`;
+            report += `- 총 API: ${state.nodes.length}개\n`;
+            report += `- 그룹: ${state.groups.size}개\n`;
+            report += `- 의존성: ${state.links.length}개\n`;
+            report += `- 순환 의존성: ${state.cycles.length}개\n\n`;
+            
+            report += `## 위험도 분석\n`;
+            const highRiskNodes = state.nodes.filter(n => calculateRiskScore(n).score >= 7);
+            report += `- 높은 위험도 API: ${highRiskNodes.length}개\n`;
+            highRiskNodes.forEach(node => {
+                report += `  - ${node.apiName} (${node.method} ${node.path})\n`;
+            });
+            
+            downloadFile('api-dependency-report.md', report);
+            toggleExportMenu();
+        }
+
+        function downloadFile(filename, content) {
+            const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // Zoom controls
+        function zoomIn() {
+            state.svg.transition().duration(300).call(state.zoom.scaleBy, 1.3);
+        }
+
+        function zoomOut() {
+            state.svg.transition().duration(300).call(state.zoom.scaleBy, 0.7);
+        }
+
+        function resetZoom() {
+            state.svg.transition().duration(300).call(state.zoom.transform, d3.zoomIdentity);
+        }
+
+        function fitToScreen() {
+            const bounds = state.g.node().getBBox();
+            const canvas = document.getElementById('canvas');
+            const width = canvas.clientWidth;
+            const height = canvas.clientHeight;
+            
+            const scale = 0.9 * Math.min(width / bounds.width, height / bounds.height);
+            const translate = [
+                width / 2 - scale * (bounds.x + bounds.width / 2),
+                height / 2 - scale * (bounds.y + bounds.height / 2)
+            ];
+            
+            state.svg.transition().duration(300).call(
+                state.zoom.transform,
+                d3.zoomIdentity.translate(translate[0], translate[1]).scale(scale)
+            );
+        }
+
+        // Animation functions
+        function toggleAnimation() {
+            state.animationEnabled = !state.animationEnabled;
+            renderGraph();
+        }
+
+        function animateNodes(selection) {
+            selection
+                .transition()
+                .duration(2000)
+                .attr('transform', d => `translate(${d.x},${d.y}) scale(1.05)`)
+                .transition()
+                .duration(2000)
+                .attr('transform', d => `translate(${d.x},${d.y}) scale(1)`)
+                .on('end', function() {
+                    if (state.animationEnabled) {
+                        animateNodes(d3.select(this));
+                    }
+                });
+        }
+
+        function animateLinks(selection) {
+            selection
+                .style('stroke-dasharray', '5,5')
+                .style('stroke-dashoffset', 0)
+                .transition()
+                .duration(3000)
+                .ease(d3.easeLinear)
+                .style('stroke-dashoffset', -10)
+                .on('end', function() {
+                    if (state.animationEnabled) {
+                        animateLinks(d3.select(this));
+                    }
+                });
+        }
+
+        // Enhanced highlight function for both click and hover
+        function highlightNodeConnectionsEnhanced(node, linkGroup, nodeGroup, links) {
+            const connectedNodes = new Set([node.id]);
+            const incomingNodes = new Set();
+            const outgoingNodes = new Set();
+            
+            // Find connected nodes
+            links.forEach(link => {
+                const sourceId = link.source.id || link.source;
+                const targetId = link.target.id || link.target;
+                
+                if (targetId === node.id) {
+                    incomingNodes.add(sourceId);
+                    connectedNodes.add(sourceId);
+                } else if (sourceId === node.id) {
+                    outgoingNodes.add(targetId);
+                    connectedNodes.add(targetId);
+                }
+            });
+
+            // Update nodes with enhanced highlighting
+            nodeGroup.selectAll('.node')
+                .style('opacity', d => {
+                    if (d.id === node.id) return 1;
+                    if (connectedNodes.has(d.id)) return 1;
+                    return 0.1; // Low opacity for non-connected nodes
+                })
+                .select('circle')
+                .style('stroke', d => {
+                    if (d.id === node.id) return '#64ffda';
+                    if (incomingNodes.has(d.id)) return '#FF6B35'; // Orange for incoming
+                    if (outgoingNodes.has(d.id)) return '#4A90E2'; // Blue for outgoing
+                    return '#fff';
+                })
+                .style('stroke-width', d => {
+                    if (d.id === node.id) return 4;
+                    if (connectedNodes.has(d.id)) return 3;
+                    return 2;
+                })
+                .style('filter', d => {
+                    if (d.id === node.id) {
+                        return 'drop-shadow(0 0 15px rgba(100, 255, 218, 0.6))';
+                    }
+                    if (incomingNodes.has(d.id)) {
+                        return 'drop-shadow(0 0 10px rgba(255, 107, 53, 0.5))';
+                    }
+                    if (outgoingNodes.has(d.id)) {
+                        return 'drop-shadow(0 0 10px rgba(74, 144, 226, 0.5))';
+                    }
+                    return 'none';
+                });
+
+            // Update links with enhanced styling
+            linkGroup.selectAll('.link')
+                .style('stroke', function(d) {
+                    const sourceId = d.source.id || d.source;
+                    const targetId = d.target.id || d.target;
+                    
+                    if (targetId === node.id) {
+                        return '#FF6B35'; // Orange for incoming
+                    } else if (sourceId === node.id) {
+                        return '#4A90E2'; // Blue for outgoing
+                    }
+                    return d.color || '#666';
+                })
+                .style('stroke-dasharray', function(d) {
+                    const sourceId = d.source.id || d.source;
+                    
+                    if (sourceId === node.id) {
+                        return '8,4'; // Dotted line for outgoing
+                    }
+                    return 'none'; // Solid line for incoming and others
+                })
+                .style('stroke-width', function(d) {
+                    const sourceId = d.source.id || d.source;
+                    const targetId = d.target.id || d.target;
+                    
+                    if (sourceId === node.id || targetId === node.id) {
+                        return 3; // Thicker lines for connected
+                    }
+                    return Math.max(1.5, Math.sqrt(d.weight || 1) * 1.5);
+                })
+                .style('stroke-opacity', function(d) {
+                    const sourceId = d.source.id || d.source;
+                    const targetId = d.target.id || d.target;
+                    
+                    if (sourceId === node.id || targetId === node.id) {
+                        return 1; // Full opacity for connected
+                    }
+                    return 0.05; // Very low opacity for non-connected
+                })
+                .attr('marker-end', function(d) {
+                    const sourceId = d.source.id || d.source;
+                    const targetId = d.target.id || d.target;
+                    
+                    if (sourceId === node.id) {
+                        return 'url(#arrow-outgoing)';
+                    } else if (targetId === node.id) {
+                        return 'url(#arrow-incoming)';
+                    }
+                    return `url(#arrow-${d.type || 'normal'})`;
+                });
+
+            // Update text visibility
+            nodeGroup.selectAll('text')
+                .style('opacity', function() {
+                    const parentNode = d3.select(this.parentNode).datum();
+                    if (parentNode && connectedNodes.has(parentNode.id)) {
+                        return 1;
+                    }
+                    return 0.1;
+                });
+        }
+
+        function highlightGroupConnectionsOnClick(groupName, linkGroup, nodeGroup, links) {
+            const connectedGroups = new Set([groupName]);
+            const incomingGroups = new Set();
+            const outgoingGroups = new Set();
+            
+            // Find connected groups
+            links.forEach(link => {
+                const sourceName = link.source.name || link.source.id || link.source;
+                const targetName = link.target.name || link.target.id || link.target;
+                
+                if (targetName === groupName) {
+                    incomingGroups.add(sourceName);
+                    connectedGroups.add(sourceName);
+                } else if (sourceName === groupName) {
+                    outgoingGroups.add(targetName);
+                    connectedGroups.add(targetName);
+                }
+            });
+
+            // Update nodes
+            nodeGroup.selectAll('.node')
+                .style('opacity', d => {
+                    const nodeName = d.name || d.id;
+                    if (nodeName === groupName) return 1;
+                    if (connectedGroups.has(nodeName)) return 1;
+                    return 0.1;
+                })
+                .select('circle')
+                .style('stroke', d => {
+                    const nodeName = d.name || d.id;
+                    if (nodeName === groupName) return '#64ffda';
+                    if (incomingGroups.has(nodeName)) return '#EA4D08';
+                    if (outgoingGroups.has(nodeName)) return '#0c8ce9';
+                    return '#fff';
+                })
+                .style('stroke-width', d => {
+                    const nodeName = d.name || d.id;
+                    if (nodeName === groupName) return 4;
+                    if (connectedGroups.has(nodeName)) return 3;
+                    return 2;
+                });
+
+            // Update links for group view - use line instead of path
+            linkGroup.selectAll('.link')
+                .style('stroke', function(d) {
+                    const sourceName = d.source.name || d.source.id || d.source;
+                    const targetName = d.target.name || d.target.id || d.target;
+                    
+                    if (targetName === groupName) {
+                        return '#FF6B35'; // Orange for incoming
+                    } else if (sourceName === groupName) {
+                        return '#4A90E2'; // Blue for outgoing
+                    }
+                    return '#666';
+                })
+                .style('stroke-dasharray', function(d) {
+                    const sourceName = d.source.name || d.source.id || d.source;
+                    const targetName = d.target.name || d.target.id || d.target;
+                    
+                    if (sourceName === groupName) {
+                        return '8,4'; // Dotted for outgoing
+                    } else if (targetName === groupName) {
+                        return 'none'; // Solid for incoming
+                    }
+                    return 'none';
+                })
+                .style('stroke-width', function(d) {
+                    const sourceName = d.source.name || d.source.id || d.source;
+                    const targetName = d.target.name || d.target.id || d.target;
+                    
+                    if (sourceName === groupName || targetName === groupName) {
+                        return Math.max(4, Math.log(d.count + 1) * 3);
+                    }
+                    return Math.max(1, Math.log(d.count + 1) * 2);
+                })
+                .style('stroke-opacity', function(d) {
+                    const sourceName = d.source.name || d.source.id || d.source;
+                    const targetName = d.target.name || d.target.id || d.target;
+                    
+                    if (sourceName === groupName || targetName === groupName) {
+                        return 1;
+                    }
+                    return 0.05;
+                });
+
+            // Update text visibility
+            nodeGroup.selectAll('text')
+                .style('opacity', function() {
+                    const parentNode = d3.select(this.parentNode).datum();
+                    if (parentNode) {
+                        const nodeName = parentNode.name || parentNode.id;
+                        return connectedGroups.has(nodeName) ? 1 : 0.1;
+                    }
+                    return 1;
+                });
+        }
+
+        function highlightGroupConnections(groupName, linkGroup, nodeGroup, links) {
+            const connectedGroups = new Set([groupName]);
+            
+            links.forEach(link => {
+                if (link.source === groupName || link.source.name === groupName) {
+                    connectedGroups.add(link.target.name || link.target);
+                }
+                if (link.target === groupName || link.target.name === groupName) {
+                    connectedGroups.add(link.source.name || link.source);
+                }
+            });
+
+            nodeGroup.selectAll('.node')
+                .style('opacity', d => connectedGroups.has(d.name || d.id) ? 1 : 0.3);
+
+            linkGroup.selectAll('.link')
+                .style('stroke-opacity', d => {
+                    const sourceName = d.source.name || d.source;
+                    const targetName = d.target.name || d.target;
+                    return (sourceName === groupName || targetName === groupName) ? 1 : 0.1;
+                });
+        }
+
+        function resetHighlight(linkGroup, nodeGroup) {
+            if (!linkGroup || !nodeGroup) return;
+            
+            nodeGroup.selectAll('.node')
+                .style('opacity', 1)
+                .select('circle')
+                .style('stroke', '#fff')
+                .style('stroke-width', 2)
+                .style('filter', d => {
+                    const metric = state.metrics.get(d.id);
+                    if (metric && metric.errorRate > 0.05) {
+                        return 'drop-shadow(0 0 10px rgba(240, 113, 120, 0.8))';
+                    }
+                    return 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))';
+                });
+            
+            linkGroup.selectAll('.link')
+                .style('stroke', d => d.color || '#666')
+                .style('stroke-dasharray', 'none')
+                .style('stroke-width', d => Math.max(1.5, Math.sqrt(d.weight || 1) * 1.5))
+                .style('stroke-opacity', 0.6)
+                .style('filter', 'none')
+                .attr('marker-end', d => `url(#arrow-${d.type || 'normal'})`);
+            
+            nodeGroup.selectAll('text')
+                .style('opacity', 1);
+        }
+
+        // Tooltip functions
+        function showNodeTooltip(event, d) {
+            const tooltip = document.getElementById('tooltip');
+            const metric = state.metrics.get(d.id);
+            
+            let content = `
+                <h4>${d.apiName}</h4>
+                <div class="tooltip-row">
+                    <span class="tooltip-label">메소드:</span>
+                    <span class="tooltip-value">${d.method}</span>
+                </div>
+                <div class="tooltip-row">
+                    <span class="tooltip-label">경로:</span>
+                    <span class="tooltip-value">${d.path}</span>
+                </div>
+                <div class="tooltip-row">
+                    <span class="tooltip-label">그룹:</span>
+                    <span class="tooltip-value">${d.group}</span>
+                </div>
+            `;
+            
+            if (metric) {
+                content += `
+                    <div class="tooltip-row">
+                        <span class="tooltip-label">호출:</span>
+                        <span class="tooltip-value">${metric.calls.toLocaleString()}회</span>
+                    </div>
+                    <div class="tooltip-row">
+                        <span class="tooltip-label">P95:</span>
+                        <span class="tooltip-value">${metric.p95}ms</span>
+                    </div>
+                    <div class="tooltip-row">
+                        <span class="tooltip-label">오류율:</span>
+                        <span class="tooltip-value">${(metric.errorRate * 100).toFixed(1)}%</span>
+                    </div>
+                `;
+            }
+            
+            tooltip.innerHTML = content;
+            tooltip.style.left = event.pageX + 10 + 'px';
+            tooltip.style.top = event.pageY + 10 + 'px';
+            tooltip.classList.add('show');
+        }
+
+        function showGroupTooltip(event, d) {
+            const tooltip = document.getElementById('tooltip');
+            const depCount = state.links.filter(link => {
+                const sourceNode = state.nodes.find(n => n.id === link.source);
+                const targetNode = state.nodes.find(n => n.id === link.target);
+                return sourceNode?.group === d.name || targetNode?.group === d.name;
+            }).length;
+            
+            tooltip.innerHTML = `
+                <h4>${d.name}</h4>
+                <div class="tooltip-row">
+                    <span class="tooltip-label">APIs:</span>
+                    <span class="tooltip-value">${d.apis.length}</span>
+                </div>
+                <div class="tooltip-row">
+                    <span class="tooltip-label">의존성:</span>
+                    <span class="tooltip-value">${depCount}</span>
+                </div>
+            `;
+            
+            tooltip.style.left = event.pageX + 10 + 'px';
+            tooltip.style.top = event.pageY + 10 + 'px';
+            tooltip.classList.add('show');
+        }
+
+        function showMatrixTooltip(event, d) {
+            const tooltip = document.getElementById('tooltip');
+            
+            tooltip.innerHTML = `
+                <h4>${d.source} → ${d.target}</h4>
+                <div class="tooltip-row">
+                    <span class="tooltip-label">연결 수:</span>
+                    <span class="tooltip-value">${d.value}</span>
+                </div>
+                <div class="tooltip-row">
+                    <span class="tooltip-label">총 가중치:</span>
+                    <span class="tooltip-value">${d.weight}</span>
+                </div>
+            `;
+            
+            tooltip.style.left = event.pageX + 10 + 'px';
+            tooltip.style.top = event.pageY + 10 + 'px';
+            tooltip.classList.add('show');
+        }
+
+        function hideTooltip() {
+            const tooltip = document.getElementById('tooltip');
+            tooltip.classList.remove('show');
+        }
+
+        function showMatrixDetail(d) {
+            if (d.value === 0) return;
+            
+            // Switch to detail view and highlight relevant connections
+            switchView('detail');
+            
+            setTimeout(() => {
+                const relevantNodes = new Set();
+                state.links.forEach(link => {
+                    const sourceNode = state.nodes.find(n => n.id === link.source);
+                    const targetNode = state.nodes.find(n => n.id === link.target);
+                    if (sourceNode?.group === d.source && targetNode?.group === d.target) {
+                        relevantNodes.add(sourceNode.id);
+                        relevantNodes.add(targetNode.id);
+                    }
+                });
+                
+                // Highlight relevant nodes
+                state.g.selectAll('.node')
+                    .style('opacity', node => relevantNodes.has(node.id) ? 1 : 0.2);
+            }, 500);
+        }
+
+        // Utility functions
+        function showStatDetails(type) {
+            let message = '';
+            switch(type) {
+                case 'groups':
+                    message = `총 ${state.groups.size}개의 API 그룹이 있습니다.`;
+                    break;
+                case 'apis':
+                    message = `총 ${state.nodes.length}개의 API 엔드포인트가 있습니다.`;
+                    break;
+                case 'deps':
+                    message = `총 ${state.links.length}개의 의존성 관계가 있습니다.`;
+                    break;
+                case 'cycles':
+                    message = `${state.cycles.length}개의 순환 의존성이 발견되었습니다.`;
+                    break;
+            }
+            showNotification(message, 'info');
+        }
+
+        function showLoading(message) {
+            const loading = document.createElement('div');
+            loading.className = 'loading';
+            loading.innerHTML = `
+                <div class="loading-spinner"></div>
+                <div class="loading-text">${message}</div>
+            `;
+            document.getElementById('canvas').appendChild(loading);
+        }
+
+        function hideLoading() {
+            const loading = document.querySelector('.loading');
+            if (loading) loading.remove();
+        }
+
+        function showNotification(message, type = 'info') {
+            // Simple notification implementation
+            console.log(`[${type.toUpperCase()}] ${message}`);
+        }
+
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                document.exitFullscreen();
+            }
+        }
+
+        function captureImage() {
+            // Capture current view as image
+            showNotification('화면 캡처 기능은 준비 중입니다', 'info');
+        }
+
+        function clearData() {
+            if (confirm('모든 데이터를 초기화하시겠습니까?')) {
+                state.nodes = [];
+                state.links = [];
+                state.groups.clear();
+                state.metrics.clear();
+                state.cycles = [];
+                state.focusedNode = null;
+                state.focusedGroup = null;
+                
+                clearFocus();
+                updateUI();
+                renderGraph();
+                localStorage.removeItem('apiDependencyState');
+                showNotification('데이터가 초기화되었습니다', 'success');
+            }
+        }
+
+        function addToHistory(type, data) {
+            state.history.push({
+                type: type,
+                data: data,
+                timestamp: new Date()
+            });
+            
+            // Keep only last 50 items
+            if (state.history.length > 50) {
+                state.history.shift();
+            }
+        }
+
+        function saveToLocalStorage() {
+            const saveData = {
+                nodes: state.nodes,
+                links: state.links,
+                groups: Array.from(state.groups.entries()),
+                metrics: Array.from(state.metrics.entries()),
+                cycles: state.cycles,
+                settings: state.settings
+            };
+            
+            localStorage.setItem('apiDependencyState', JSON.stringify(saveData));
+        }
+
+        function loadFromLocalStorage() {
+            const saved = localStorage.getItem('apiDependencyState');
+            if (saved) {
+                try {
+                    const data = JSON.parse(saved);
+                    state.nodes = data.nodes || [];
+                    state.links = data.links || [];
+                    state.groups = new Map(data.groups || []);
+                    state.metrics = new Map(data.metrics || []);
+                    state.cycles = data.cycles || [];
+                    state.settings = data.settings || state.settings;
+                    
+                    updateUI();
+                    if (state.nodes.length > 0) {
+                        renderGraph();
+                    }
+                } catch (error) {
+                    console.error('Failed to load saved state:', error);
+                }
+            }
+        }
+
+        // Sample data loader
+        function loadSampleData() {
+            const sampleOpenAPI = {
+                openapi: "3.0.0",
+                info: { title: "E-Commerce API", version: "2.0.0" },
+                paths: {
+                    "/auth/login": {
+                        post: { summary: "사용자 로그인", tags: ["auth"], operationId: "login" }
+                    },
+                    "/auth/logout": {
+                        post: { summary: "사용자 로그아웃", tags: ["auth"], operationId: "logout" }
+                    },
+                    "/auth/refresh": {
+                        post: { summary: "토큰 갱신", tags: ["auth"], operationId: "refreshToken" }
+                    },
+                    "/users": {
+                        get: { summary: "사용자 목록", tags: ["user"], operationId: "getUsers" },
+                        post: { summary: "사용자 생성", tags: ["user"], operationId: "createUser" }
+                    },
+                    "/users/{id}": {
+                        get: { summary: "사용자 상세", tags: ["user"], operationId: "getUser" },
+                        put: { summary: "사용자 수정", tags: ["user"], operationId: "updateUser" },
+                        delete: { summary: "사용자 삭제", tags: ["user"], operationId: "deleteUser" }
+                    },
+                    "/products": {
+                        get: { summary: "상품 목록", tags: ["product"], operationId: "getProducts" },
+                        post: { summary: "상품 등록", tags: ["product"], operationId: "createProduct" }
+                    },
+                    "/products/{id}": {
+                        get: { summary: "상품 상세", tags: ["product"], operationId: "getProduct" },
+                        put: { summary: "상품 수정", tags: ["product"], operationId: "updateProduct" },
+                        delete: { summary: "상품 삭제", tags: ["product"], operationId: "deleteProduct" }
+                    },
+                    "/orders": {
+                        get: { summary: "주문 목록", tags: ["order"], operationId: "getOrders" },
+                        post: { summary: "주문 생성", tags: ["order"], operationId: "createOrder" }
+                    },
+                    "/orders/{id}": {
+                        get: { summary: "주문 상세", tags: ["order"], operationId: "getOrder" },
+                        put: { summary: "주문 수정", tags: ["order"], operationId: "updateOrder" },
+                        delete: { summary: "주문 취소", tags: ["order"], operationId: "cancelOrder" }
+                    },
+                    "/payments": {
+                        get: { summary: "결제 내역", tags: ["payment"], operationId: "getPayments" },
+                        post: { summary: "결제 처리", tags: ["payment"], operationId: "processPayment" }
+                    },
+                    "/payments/{id}/refund": {
+                        post: { summary: "환불 처리", tags: ["payment"], operationId: "refundPayment" }
+                    }
+                }
+            };
+
+            const sampleMetrics = [
+                { id: "GET_/users", calls: 15000, p95: 250, errorRate: 0.01 },
+                { id: "POST_/users", calls: 3000, p95: 450, errorRate: 0.02 },
+                { id: "GET_/users/{id}", calls: 25000, p95: 180, errorRate: 0.005 },
+                { id: "POST_/auth/login", calls: 8000, p95: 320, errorRate: 0.03 },
+                { id: "GET_/products", calls: 30000, p95: 200, errorRate: 0.01 },
+                { id: "GET_/products/{id}", calls: 45000, p95: 150, errorRate: 0.008 },
+                { id: "POST_/orders", calls: 5000, p95: 800, errorRate: 0.04 },
+                { id: "POST_/payments", calls: 5000, p95: 1200, errorRate: 0.08 }
+            ];
+
+            parseOpenAPI(sampleOpenAPI);
+            parseMetrics(sampleMetrics);
+            renderGraph();
+            saveToLocalStorage();
+            showNotification('✅ 샘플 데이터가 로드되었습니다', 'success');
+        }
+    </script>
+</body>
+</html>
